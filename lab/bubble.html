@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bubble mode</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400&family=Schibsted+Grotesk:wght@400;500&display=swap" rel="stylesheet">
+<link href="bubble.css" rel="stylesheet">
+<style>
+  /* The bubble ideas side by side over a wallpaper: the bubbles (hover one for its card, click it for the field), then
+     the cards and the fields shown open. ?b=<bubble>&card=<card>&art=<layout> shows one alone on a transparent page,
+     pinned to the bottom right, for the app (&app=1); ?relay=demo makes agents up. */
+  body { margin: 0; min-height: 100vh; color: #e8e8e8; font: 400 .875rem/1.5 "Schibsted Grotesk", system-ui, sans-serif;
+    background: #222 url(torii.jpg) center / cover fixed; }
+  h1 { margin: 0; padding: 2rem 2.5rem 0; font-size: 1rem; font-weight: 500; text-shadow: 0 1px 6px #000; }
+  .intro { margin: .25rem 2.5rem 0; max-width: 46rem; font-size: .8125rem; color: #ddd; text-shadow: 0 1px 6px #000; }
+  .intro a { color: inherit; }
+  h2 { margin: 0; padding: 1.75rem 2.5rem 0; font-size: .9375rem; font-weight: 500; text-shadow: 0 1px 6px #000; }
+  h2 + p { margin: .15rem 2.5rem 0; font-size: .8125rem; color: #d0d0d0; text-shadow: 0 1px 6px #000; }
+  .controls { position: absolute; top: 1.9rem; right: 2.5rem; display: flex; gap: 1rem; font-size: .8125rem; text-shadow: 0 1px 6px #000; }
+  .controls select { font: inherit; background: rgb(0 0 0 / .5); color: inherit; border: 1px solid rgb(255 255 255 / .2); border-radius: 4px; }
+  main { display: flex; flex-wrap: wrap; gap: 1.5rem; padding: 1.5rem 2.5rem; }
+  figure { margin: 0; }
+  .stage { position: relative; width: 420px; height: 240px; border-radius: 12px; outline: 1px dashed rgb(255 255 255 / .15); }
+  figcaption { margin-top: .5rem; text-shadow: 0 1px 6px #000; max-width: 420px; }
+  figcaption b { font-weight: 500; }
+  figcaption span { display: block; color: #c4c4c4; font: 400 .75rem/1.45 "Geist Mono", ui-monospace, monospace; }
+
+  html.one, html.one body { background: transparent; }
+  html.one body { height: 100vh; overflow: hidden; }
+</style>
+</head>
+<body>
+<script type="module">
+  import { bubble, BUBBLES, CARDS } from './bubble.js';
+  import { MACHINES } from './lab.js';
+  const q = new URLSearchParams(location.search), one = q.get('b');
+  const art = MACHINES[q.get('art')] ? q.get('art') : 'haul', card = CARDS[q.get('card')] ? q.get('card') : 'classic';
+  if (one && BUBBLES[one]) {
+    document.documentElement.classList.add('one');
+    window.bubble = bubble(document.body, { style: one, card, art, app: q.has('app') });
+  } else {
+    // The cards with the bubble each goes best with, and the fields worth comparing open.
+    const PAIR = { classic: 'orb', speed: 'tach', agents: 'quake' }, FIELDS = ['haulflow', 'dash', 'haul'];
+    const fig = (data, size, title, url, note) => `<figure style="width:${size[0]}px"><div class="stage" ${data} style="width:${size[0]}px;height:${size[1]}px"></div>
+      <figcaption><b>${title}</b><span>${url}</span><span>${note}</span></figcaption></figure>`;
+    const select = (id, list, at) => `<select id="${id}">${Object.entries(list).map(([k, m]) => `<option value="${k}"${k === at ? ' selected' : ''}>${m.name}</option>`).join('')}</select>`;
+    const demo = q.get('relay') === 'demo';
+    document.body.innerHTML = `<h1>Bubble mode</h1>
+      <p class="intro">A bubble floats in a corner. Hover it for a card, click it to open the field, click again to close: a
+        bubble, a card and a field to pick. ${demo ? 'Made-up agents — <a href="?">follow the relay</a>.' : '<a href="?relay=demo">Made-up agents</a> to see them move when nobody is working.'}</p>
+      <div class="controls"><label>Card on hover ${select('card', CARDS, card)}</label><label>Field on click ${select('art', MACHINES, art)}</label></div>
+      <h2>Bubbles</h2><p>Hover one for the card, click it for the field, both picked at the top right.</p>
+      <main>${Object.entries(BUBBLES).map(([k, b]) => fig(`data-b="${k}"`, [360, 250], b.name, `?b=${k}`, b.note)).join('')}</main>
+      <h2>Cards on hover</h2><p>Shown open, each on the bubble it goes best with.</p>
+      <main>${Object.entries(CARDS).map(([k, c]) => fig(`data-card="${k}"`, [360, 310], c.name, `?card=${k}`, c.note)).join('')}</main>
+      <h2>Fields on click</h2><p>Shown open; click one to close it to its bubble. Any layout can be the field.</p>
+      <main>${FIELDS.map(k => fig(`data-art="${k}"`, MACHINES[k].size().map(v => v + 48), MACHINES[k].name, `?art=${k}`, MACHINES[k].note)).join('')}</main>`;
+    for (const id of ['card', 'art']) document.getElementById(id).addEventListener('change', e => { q.set(id, e.target.value); location.search = q; });
+    for (const el of document.querySelectorAll('[data-b]')) bubble(el, { style: el.dataset.b, card, art });
+    for (const el of document.querySelectorAll('[data-card]')) bubble(el, { style: PAIR[el.dataset.card], card: el.dataset.card, art, pin: 'card' });
+    for (const el of document.querySelectorAll('[data-art]')) bubble(el, { style: 'tach', card, art: el.dataset.art, pin: 'open' });
+  }
+</script>
+</body>
+</html>

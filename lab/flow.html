@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Throughput lab</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400&family=Schibsted+Grotesk:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* The streamed tokens read as speed: each piece in a small dark glass window over the wallpaper, like index.html.
+     ?only=<piece> shows one alone on a transparent page; ?relay=demo makes agents up instead of following the relay. */
+  body { margin: 0; min-height: 100vh; color: #e8e8e8; font: 400 .875rem/1.5 "Schibsted Grotesk", system-ui, sans-serif;
+    background: #222 url(torii.jpg) center / cover fixed; }
+  h1 { margin: 0; padding: 2rem 2.5rem 0; font-size: 1rem; font-weight: 500; text-shadow: 0 1px 6px #000; }
+  .intro { margin: .25rem 2.5rem 0; max-width: 46rem; font-size: .8125rem; color: #ddd; text-shadow: 0 1px 6px #000; }
+  .intro a { color: inherit; }
+  main { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 2.5rem; padding: 1.5rem 2.5rem; }
+  figure { margin: 0; }
+  .glass { display: inline-block; padding: 10px; border-radius: 12px; background: rgb(14 14 14 / .78);
+    backdrop-filter: blur(24px) saturate(1.4); box-shadow: 0 0 0 1px rgb(255 255 255 / .06); }
+  .clear .glass { background: none; backdrop-filter: none; box-shadow: 0 0 0 1px rgb(255 255 255 / .12); }
+  .bare { display: inline-block; }
+  figcaption { margin-top: .6rem; max-width: 24rem; text-shadow: 0 1px 6px #000; }
+  figcaption b { font-weight: 500; }
+  figcaption span { display: block; color: #c4c4c4; font: 400 .75rem/1.45 "Geist Mono", ui-monospace, monospace; }
+  label { position: fixed; top: 1.9rem; right: 2.5rem; font-size: .8125rem; text-shadow: 0 1px 6px #000; }
+  html.only, html.only body { background: transparent; }
+  html.only body { display: grid; place-items: center; height: 100vh; overflow: hidden; }
+</style>
+</head>
+<body>
+<script type="module">
+  import { start, PIECES } from './flow.js';
+  const q = new URLSearchParams(location.search), only = q.get('only'), demo = q.get('relay') === 'demo';
+  if (only && PIECES[only]) {
+    document.documentElement.classList.add('only');
+    const el = document.createElement('div'); document.body.append(el);
+    const [w, h] = PIECES[only].size(); window.webkit?.messageHandlers?.frame?.postMessage({ w, h, widget: true });
+    start([[el, only]]);
+  } else {
+    document.body.innerHTML = `<h1>Throughput lab</h1>
+      <p class="intro">The tokens as they stream, read as speed. ${demo ? 'Made-up agents — <a href="?">follow the relay</a>.'
+        : 'Live from the relay — <a href="?relay=demo">made-up agents</a> to see it move when nobody is working.'}
+        Each turn’s tokens are handed out over the time since the agent’s last one, so the figures run at the rate they were made.</p>
+      <label><input type="checkbox" id="clear"> No glass</label>
+      <main>${Object.entries(PIECES).map(([k, p]) => `<figure><div class="${k.startsWith('tach') ? 'bare' : 'glass'}" data-p="${k}"></div>
+        <figcaption><b>${p.name}</b><span>?only=${k} · ${p.size().join(' × ')}</span><span>${p.note}</span></figcaption></figure>`).join('')}</main>`;
+    document.getElementById('clear').addEventListener('change', e => document.body.classList.toggle('clear', e.target.checked));
+    start([...document.querySelectorAll('[data-p]')].map(el => [el, el.dataset.p]));
+  }
+</script>
+</body>
+</html>

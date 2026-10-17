@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tokiscope Settings</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400&family=Schibsted+Grotesk:wght@400;500&display=swap" rel="stylesheet">
+<link href="bubble.css" rel="stylesheet">
+<style>
+  /* The app's settings window: every bubble, card and layout running live, the ones in use outlined; clicking one
+     uses it (the app is told through `pick`, and tells the page back through window.settings.set). In a browser it
+     only previews. ?mode=widget|bubble&b=<bubble>&card=<card>&layout=<layout>&kinds=<in,cr,cw,out> says what is in use. */
+  :root { --accent: #e2502b; }
+  body { margin: 0; color: #e8e8e8; font: 400 .8125rem/1.45 "Schibsted Grotesk", system-ui, sans-serif; background: #141414;
+    -webkit-user-select: none; user-select: none; }
+  header { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; padding: 2.4rem 1.75rem .9rem;
+    background: #141414; box-shadow: 0 1px 0 rgb(255 255 255 / .06); }
+  h1 { margin: 0; font-size: 1rem; font-weight: 500; }
+  header p { flex-basis: 100%; margin: 0; color: #6f6f6f; }
+  .seg { display: inline-flex; padding: 2px; border-radius: 8px; background: #232323; box-shadow: inset 0 0 0 1px rgb(255 255 255 / .06); }
+  .seg button { font: inherit; color: #bdbdbd; background: none; border: 0; padding: .3rem .9rem; border-radius: 6px; cursor: pointer; }
+  .seg button.on { color: #fff; background: #3a3a3a; }
+  .kinds { display: inline-flex; align-items: center; gap: .35rem; color: #8a8a8a; }
+  .kinds button { font: inherit; color: #9a9a9a; background: #1d1d1d; border: 0; padding: .25rem .6rem; border-radius: 999px; cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / .08); }
+  .kinds button.on { color: #fff; background: #3a2a25; box-shadow: inset 0 0 0 1px var(--accent); }
+  h2 { margin: 0; padding: 1.1rem 1.75rem .15rem; font-size: .875rem; font-weight: 500; }
+  h2 + p { margin: 0 1.75rem; color: #8a8a8a; }
+  h3 { margin: 0; padding: .9rem 1.75rem 0; font-size: .75rem; font-weight: 500; color: #9a9a9a; text-transform: uppercase; letter-spacing: .04em; }
+  .grid { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .9rem; padding: .7rem 1.75rem .4rem; }
+  .tile { display: flex; flex-direction: column; align-items: center; gap: .4rem; padding: 8px; border: 0; border-radius: 12px;
+    background: #1b1b1b; color: inherit; font: inherit; cursor: pointer; box-shadow: inset 0 0 0 1px rgb(255 255 255 / .05);
+    transition: box-shadow .15s ease, background .15s ease; }
+  .tile:hover { background: #222; box-shadow: inset 0 0 0 1px rgb(255 255 255 / .14); }
+  .tile.on { box-shadow: inset 0 0 0 2px var(--accent); background: #211a18; }
+  .tile span { color: #cfcfcf; }
+  .tile.on span { color: #fff; }
+  .tile span i { font-style: normal; color: var(--accent); }
+  .pv { position: relative; pointer-events: none; overflow: hidden; text-align: left; }
+  .pv > .in { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  .field { padding: 10px; border-radius: 12px; background: #0e0e0e; box-shadow: 0 0 0 1px rgb(255 255 255 / .06); }
+  body.widget .bubble-only { display: none; }
+  footer { padding: 1.2rem 1.75rem 1.75rem; color: #6f6f6f; }
+</style>
+</head>
+<body>
+<script type="module">
+  import { bubble, BUBBLES, CARDS } from './bubble.js';
+  import { run, MACHINES } from './lab.js';
+  import { setKinds } from './flow.js';
+  const q = new URLSearchParams(location.search);
+  const state = { mode: q.get('mode') === 'widget' ? 'widget' : 'bubble', b: q.get('b') || 'orb', card: q.get('card') || 'classic', layout: q.get('layout') || 'haul',
+    kinds: (q.get('kinds') || 'in,cr,cw,out').split(',') };
+  const KINDS = [['in', 'Input'], ['cr', 'Cache read'], ['cw', 'Cache write'], ['out', 'Output']];
+  const PAIR = { classic: 'orb', speed: 'tach', agents: 'quake' };      // the bubble each card shows on
+  const GROUPS = [['With the trucks', m => m.trucks], ['Throughput', m => m.flow && !m.trucks], ['Machines', m => !m.trucks && !m.flow]];
+  const tile = (kind, key, name, w, h) => `<button class="tile" data-kind="${kind}" data-key="${key}"><div class="pv" style="width:${w}px;height:${h}px"><div class="in"></div></div><span>${name}</span></button>`;
+  document.body.innerHTML = `<header><h1>Tokiscope</h1><div class="seg"><button data-mode="widget">Widget</button><button data-mode="bubble">Bubble</button></div>
+      <div class="kinds">Count ${KINDS.map(([k, name]) => `<button data-k="${k}">${name}</button>`).join('')}</div>
+      <p>All live. Click one to use it. The tokens counted change the rates, meters, odometers, traces and rain; the trucks carry them all.</p></header>
+    <section class="bubble-only"><h2>Bubble</h2><p>What floats in the corner.</p>
+      <div class="grid">${Object.entries(BUBBLES).map(([k, b]) => tile('bubble', k, b.name, 84, 84)).join('')}</div></section>
+    <section class="bubble-only"><h2>Card on hover</h2><p>What shows beside the bubble while the pointer is over it.</p>
+      <div class="grid">${Object.entries(CARDS).map(([k, c]) => tile('card', k, c.name, 275, 240)).join('')}</div></section>
+    <section><h2 id="lt"></h2><p id="lp"></p>
+      ${GROUPS.map(([title, of]) => `<h3>${title}</h3><div class="grid">${Object.entries(MACHINES).filter(([, m]) => of(m))
+        .map(([k, m]) => tile('layout', k, m.name, 0, 0)).join('')}</div>`).join('')}</section>
+    <footer>Zoom, where it sits and the rest are in the menu bar.</footer>`;
+
+  // The bubbles alone, the cards held open on the bubble each goes with (at 0.8), the layouts as they show (scaled to fit).
+  for (const el of document.querySelectorAll('[data-kind=bubble] .in')) { el.style.cssText += 'width:84px;height:84px'; bubble(el, { style: el.closest('.tile').dataset.key, art: null }); }
+  for (const el of document.querySelectorAll('[data-kind=card] .in')) {
+    el.style.cssText += 'width:344px;height:300px;transform:scale(.8)';
+    const k = el.closest('.tile').dataset.key;
+    bubble(el, { style: PAIR[k], card: k, art: null, pin: 'card' });
+  }
+  const fields = [...document.querySelectorAll('[data-kind=layout] .in')];
+  for (const el of fields) el.innerHTML = '<div class="field"><div></div></div>';
+  const fit = () => {
+    for (const el of fields) {
+      const [w, h] = MACHINES[el.closest('.tile').dataset.key].size(), s = Math.min(1, 280 / (w + 20));
+      el.style.transform = `scale(${s})`;
+      Object.assign(el.parentElement.style, { width: Math.round((w + 20) * s) + 'px', height: Math.round((h + 20) * s) + 'px' });
+    }
+  };
+  run(fields.map(el => [el.querySelector('.field > div'), el.closest('.tile').dataset.key]), [], fit);
+  fit();
+
+  // What is in use, from the app.
+  window.settings = {
+    set(s) {
+      Object.assign(state, s);
+      document.body.className = state.mode;
+      for (const b of document.querySelectorAll('.seg button')) b.classList.toggle('on', b.dataset.mode === state.mode);
+      for (const b of document.querySelectorAll('.kinds button')) b.classList.toggle('on', state.kinds.includes(b.dataset.k));
+      if (s.kinds) setKinds(state.kinds);
+      for (const t of document.querySelectorAll('.tile')) t.classList.toggle('on', state[{ bubble: 'b', card: 'card', layout: 'layout' }[t.dataset.kind]] === t.dataset.key);
+      document.getElementById('lt').textContent = state.mode === 'bubble' ? 'Opens on click' : 'Layout';
+      document.getElementById('lp').textContent = state.mode === 'bubble' ? 'What the bubble opens into when clicked.' : 'What sits on the desktop.';
+    },
+  };
+  const pick = (kind, key) => {
+    window.webkit?.messageHandlers?.pick?.postMessage({ kind, key });
+    window.settings.set(kind === 'mode' ? { mode: key } : kind === 'bubble' ? { b: key, mode: 'bubble' } : { [kind]: key });
+  };
+  for (const b of document.querySelectorAll('.seg button')) b.addEventListener('click', () => pick('mode', b.dataset.mode));
+  // The tokens counted: any of the four, never none.
+  for (const b of document.querySelectorAll('.kinds button')) b.addEventListener('click', () => {
+    const k = b.dataset.k, on = state.kinds.includes(k), next = KINDS.map(([x]) => x).filter(x => x === k ? !on : state.kinds.includes(x));
+    if (!next.length) return;
+    window.webkit?.messageHandlers?.pick?.postMessage({ kind: 'kinds', key: next.join() });
+    window.settings.set({ kinds: next });
+  });
+  for (const t of document.querySelectorAll('.tile')) t.addEventListener('click', () => pick(t.dataset.kind, t.dataset.key));
+  window.settings.set({});
+</script>
+</body>
+</html>

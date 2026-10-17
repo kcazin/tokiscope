@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compact widget machines</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400&family=Schibsted+Grotesk:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* Each machine as the desktop widget would show it: in a small dark glass window over a wallpaper.
+     ?only=<machine> shows one machine alone on a transparent page, for the widget app. */
+  body { margin: 0; min-height: 100vh; color: #e8e8e8; font: 400 .875rem/1.5 "Schibsted Grotesk", system-ui, sans-serif;
+    background: #222 url(torii.jpg) center / cover fixed; }
+  h1 { margin: 0; padding: 2rem 2.5rem 0; font-size: 1rem; font-weight: 500; text-shadow: 0 1px 6px #000; }
+  h2 { margin: 0; padding: 1.5rem 2.5rem 0; font-size: .8125rem; font-weight: 500; color: #d8d8d8; text-shadow: 0 1px 6px #000; }
+  main { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 2.5rem; padding: 1.25rem 2.5rem 1.5rem; }
+  figure { margin: 0; }
+  .glass { display: inline-block; padding: 10px; border-radius: 12px; background: rgb(14 14 14 / .78);
+    backdrop-filter: blur(24px) saturate(1.4); box-shadow: 0 0 0 1px rgb(255 255 255 / .06); }
+  .clear .glass { background: none; backdrop-filter: none; box-shadow: 0 0 0 1px rgb(255 255 255 / .12); }
+  figcaption { margin-top: .6rem; max-width: 24rem; text-shadow: 0 1px 6px #000; }
+  figcaption b { font-weight: 500; }
+  figcaption span { display: block; color: #c4c4c4; font: 400 .75rem/1.45 "Geist Mono", ui-monospace, monospace; }
+  figcaption i { font-style: normal; }
+  label { position: fixed; top: 1.9rem; right: 2.5rem; font-size: .8125rem; text-shadow: 0 1px 6px #000; }
+  .key { display: flex; gap: 1rem; padding: 0 2.5rem; font-size: .8125rem; text-shadow: 0 1px 6px #000; }
+  .key i { display: inline-block; width: .55rem; height: .55rem; border-radius: 2px; margin-right: .35rem; }
+  html.only, html.only body { background: transparent; }
+  html.only body { display: grid; place-items: center; height: 100vh; overflow: hidden; }
+</style>
+</head>
+<body>
+<script type="module">
+  import { run, MACHINES, PROJECTS, NAMES, RGB } from './lab.js';
+  import './flow.js';                  // the throughput layouts: the trucks at speed, the dashboard and its pieces
+  const only = new URLSearchParams(location.search).get('only');
+  if (only && MACHINES[only]) {
+    document.documentElement.classList.add('only');
+    const el = document.createElement('div'); document.body.append(el);
+    // The app sizes its window from this, again whenever the projects change and the machine is rebuilt.
+    const size = () => { const [w, h] = MACHINES[only].size(); window.webkit?.messageHandlers?.frame?.postMessage({ w, h, widget: true }); };
+    run([[el, only]], [], size);
+    size();
+  } else {
+    document.body.innerHTML = `<h1>Compact widget machines</h1>
+      <label><input type="checkbox" id="clear"> No glass</label>
+      <p class="key"></p>
+      ${[['With the trucks', m => m.trucks], ['Throughput', m => m.flow && !m.trucks], ['Other machines', m => !m.trucks && !m.flow]].map(([title, of]) => `<h2>${title}</h2>
+      <main>${Object.entries(MACHINES).filter(([, m]) => of(m)).map(([k, m]) => `<figure><div class="glass" data-m="${k}"></div>
+        <figcaption><b>${m.name}</b><span>?only=${k} · <i data-size="${k}"></i></span><span>${m.note}</span></figcaption></figure>`).join('')}</main>`).join('')}`;
+    document.getElementById('clear').addEventListener('change', e => document.body.classList.toggle('clear', e.target.checked));
+    // The key and the sizes follow the projects the feed names.
+    const key = () => {
+      document.querySelector('.key').innerHTML = `${PROJECTS.map(p => `<span><i style="background:rgb(${RGB[p]})"></i>${NAMES[p]}</span>`).join('')}<span style="opacity:.8">· figures are tokens today</span>`;
+      for (const el of document.querySelectorAll('[data-size]')) el.textContent = MACHINES[el.dataset.size].size().join(' × ');
+    };
+    run([...document.querySelectorAll('[data-m]')].map(el => [el, el.dataset.m]), [], key);
+    key();
+  }
+</script>
+</body>
+</html>
