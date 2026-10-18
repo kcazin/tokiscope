@@ -36,7 +36,7 @@ them to the hub. The widget shows the hub's view.
 - The widget reads the hub on this Mac first, then the hubs this Mac joined, with the read-only token each gave it.
   A **relay** (*Load From > Other Stats Relay…*) is read when no hub answers.
 
-`Tokiscope --stats hub | join "<line>" | pair | take-over | stop | status` does the same from a script.
+`Tokiscope --stats hub | join "<line>" | pair | take-over | start | stop | status` does the same from a script.
 
 ## Build
 

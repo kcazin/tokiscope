@@ -383,6 +383,7 @@ enum Stats {
         let on = jobs.filter { $0.0.status == .enabled }.map(\.1)
         if !on.isEmpty { return "agent-stats\(version.map { " " + $0 } ?? ""): \(on.joined(separator: " and ")) running" }
         if !separate.isEmpty { return "agent-stats: Installed Separately (\(separate.joined(separator: ", ")))" }
+        if isHub || joined { return "agent-stats: Stopped" }
         return "agent-stats: Not Set Up"
     }
 
@@ -552,6 +553,57 @@ enum Stats {
         }
     }
 
+    // What that install set in its jobs' environment, which the app's jobs don't have: the reporter's label, machine
+    // name and timezone move into config.toml, and its HUB_URL must be a joined hub's route. Anything else stops the
+    // take-over, named, before anything changes.
+    private static func carryOver(_ roles: [String]) throws {
+        let before = (try? String(contentsOf: configToml, encoding: .utf8)) ?? ""
+        var config = before, left: [String] = []
+        for r in roles {
+            let plist = NSDictionary(contentsOf: home.appendingPathComponent("Library/LaunchAgents/dev.agent-stats.\(r).plist"))
+            let env = plist?["EnvironmentVariables"] as? [String: String] ?? [:]
+            for (k, v) in env.sorted(by: { $0.key < $1.key }) where k != "PATH" && k != "HOME" {
+                switch (r, k) {
+                case ("report", "STATS_LABEL"): config = setting(config, "label", v)
+                case ("report", "STATS_MACHINE"): config = setting(config, "machine", v)
+                case ("report", "STATS_TZ"): config = setting(config, "timezone", v)
+                case ("report", "HUB_URL") where before.contains("\"\(v.hasSuffix("/") ? String(v.dropLast()) : v)\""): break
+                default: left.append("\(k) for \(r == "report" ? "the reporter" : "the \(r)")")
+                }
+            }
+        }
+        guard left.isEmpty else {
+            throw Failure(message: "agent-stats here gets settings from its services' environment that Tokiscope's don't carry (\(left.joined(separator: ", "))). Move them into config.toml or hub.toml (see agent-stats' docs/ARCHITECTURE.md), then try again. Nothing was changed.")
+        }
+        if config != before { try write(configToml, config) }
+    }
+    // config.toml with a top-level `key = "value"`, replacing the key's line or going before the first table.
+    private static func setting(_ toml: String, _ key: String, _ value: String) -> String {
+        let line = "\(key) = \"\(tomlString(value))\""
+        var lines = toml.components(separatedBy: "\n"), firstTable = lines.firstIndex { $0.hasPrefix("[") } ?? lines.count
+        if let i = lines[..<firstTable].firstIndex(where: { $0.split(separator: "=").first?.trimmingCharacters(in: .whitespaces) == key }) {
+            lines[i] = line
+        } else {
+            if firstTable == lines.count, lines.last == "" { firstTable -= 1 }
+            lines.insert(line, at: firstTable)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    // The jobs this Mac's setup needs, started afresh: whatever macOS had registered for them is dropped first.
+    static func startAfresh() throws {
+        guard separate.filter({ $0 != "relay" }).isEmpty else {
+            throw Failure(message: "agent-stats runs on its own here: Let Tokiscope Run agent-stats… takes it over.")
+        }
+        guard isHub || joined else { throw Failure(message: "This Mac isn't set up yet: Set Up This Mac… in the menu.") }
+        try stop()
+        if isHub { try start(hubJob); try start(updater); try waitForHub() }
+        if joined { try start(report) }
+    }
+    static var stopped: Bool {
+        separate.filter { $0 != "relay" }.isEmpty && (isHub || joined) && ![hubJob, report].contains { $0.status == .enabled }
+    }
+
     // Stops the app's jobs (config and stats stay).
     static func stop() throws {
         for job in [report, hubJob, updater] where [.enabled, .requiresApproval].contains(job.status) {
@@ -563,6 +615,7 @@ enum Stats {
     // state, so nothing is lost. If one of the app's jobs doesn't start, that install's are put back.
     static func takeOver() throws {
         let bin = home.appendingPathComponent(".local/bin/agent-stats"), roles = separate.filter { $0 != "relay" }
+        try carryOver(roles)
         for r in roles { try exec(["service", "uninstall", r], program: bin) }
         do {
             if roles.contains("hub") { try start(hubJob); try start(updater); try waitForHub() }
@@ -645,8 +698,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
-        // For scripts and tests: `Tokiscope --stats hub | join "<line>" | pair | take-over | stop | status` does what
-        // the menu would (stop: the app's background items, until set up again), prints how it went and quits.
+        // For scripts and tests: `Tokiscope --stats hub | join "<line>" | pair | take-over | start | stop | status` does
+        // what the menu would (start: the jobs this Mac's setup needs, afresh; stop: all of them), prints how it went
+        // and quits.
         if let i = CommandLine.arguments.firstIndex(of: "--stats") {
             let a = Array(CommandLine.arguments.dropFirst(i + 1))
             do {
@@ -656,8 +710,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
                 case "pair": print(try Stats.pair())
                 case "take-over": try Stats.takeOver(); print("taken over")
                 case "stop": try Stats.stop(); print("stopped")
+                case "start": try Stats.startAfresh(); print("started")
                 case "status": print(Stats.summary(Stats.version())); print(HubFeed.routes().map { $0.url + ($0.token == nil ? "" : " (view token)") }.joined(separator: "\n"))
-                default: print("usage: Tokiscope --stats hub | join \"<line>\" | pair | take-over | stop | status"); exit(2)
+                default: print("usage: Tokiscope --stats hub | join \"<line>\" | pair | take-over | start | stop | status"); exit(2)
                 }
                 exit(0)
             } catch {
@@ -1065,6 +1120,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
                 _ = add("Add Machine…", false, #selector(addMachine))
                 if Stats.isHub { _ = add("Open the Hub's Dashboard", false, #selector(openDashboard)) }
                 if Stats.bundled, !Stats.separate.filter({ $0 != "relay" }).isEmpty { _ = add("Let Tokiscope Run agent-stats…", false, #selector(takeOver)) }
+                if Stats.bundled, Stats.stopped { _ = add("Start agent-stats", false, #selector(startStats)) }
             }
             menu.addItem(withTitle: Stats.summary(statsVersion), action: nil, keyEquivalent: "").isEnabled = false
         }
@@ -1295,6 +1351,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         guard r != .alertThirdButtonReturn else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(r == .alertFirstButtonReturn ? line : install + line, forType: .string)
+    }
+
+    @objc private func startStats() {
+        background("Starting agent-stats…") { try Stats.startAfresh(); return nil }
     }
 
     @objc private func openDashboard() { if let u = URL(string: Stats.localHub + "/") { NSWorkspace.shared.open(u) } }
