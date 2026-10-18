@@ -71,3 +71,9 @@ tokens out over the time since its last ones (2–8 s) rather than over the 15 s
 
 To work on the pages without rebuilding: `python3 -m http.server 8765` here, then Load From > Local Copy in the menu,
 or open http://localhost:8765/lab/ in a browser.
+
+## License
+
+GPL-3.0-or-later: see [LICENSE](LICENSE). You may use, change and share Tokiscope; whatever you distribute that builds
+on it must be under the GPL too, with its source. It ships [agent-stats](https://github.com/kcazin/agent-stats)
+(GPL-3.0-or-later) and [Sparkle](https://sparkle-project.org) (MIT, its license in the app as `Sparkle-LICENSE`).

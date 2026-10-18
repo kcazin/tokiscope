@@ -43,6 +43,7 @@ cp -R lab "$C/Resources/"
 cp agents/*.plist "$C/Library/LaunchAgents/"
 ditto "$SP/Sparkle.framework" "$C/Frameworks/Sparkle.framework"
 cp "$SP/LICENSE" "$C/Resources/Sparkle-LICENSE"
+cp LICENSE "$C/Resources/LICENSE"
 
 pin() { sed -n "s/^$1=//p" agent-stats.pin; }
 if [ -n "${AGENT_STATS_BIN:-}" ]; then
