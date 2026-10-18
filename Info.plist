@@ -6,6 +6,7 @@
   <key>CFBundleName</key><string>Tokiscope</string>
   <key>CFBundleExecutable</key><string>Tokiscope</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <!-- A release build sets both from its tag (build.sh with TOKISCOPE_VERSION). -->
   <key>CFBundleShortVersionString</key><string>0.0.0</string>
   <key>CFBundleVersion</key><string>0.0.0</string>

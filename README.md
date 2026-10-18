@@ -14,6 +14,8 @@ zoom, click-through, background, and whether it sits above windows or on the des
   and layout running live, the ones in use outlined; click one to use it. Count picks the tokens the rates, meters,
   odometers, traces and rain count (input, cache read, cache write, output; `?kinds=in,cr,cw,out` on any page): with
   some of them, those views follow the agents' turns kind by kind; the trucks always carry every token.
+- `icon/` — the app icon, pixel art like the widget: `make_icon.py` draws it, `make_icns.sh [concept]` makes the
+  `AppIcon.icns` the build ships.
 - `lab/flow.html` — the throughput lab: the streamed tokens read as speed (an odometer, a seismograph of each agent's
   turns, the output as a rain of letters, level meters, a tachometer bubble). `?only=<piece>` shows one alone;
   `?relay=demo` makes agents up (on bubble.html too), to see it move when nobody is working.
