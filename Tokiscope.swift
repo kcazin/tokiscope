@@ -345,7 +345,7 @@ final class RelayFeed {
 // sends them to the hub here; the hub, which keeps every machine's stats and syncs them with the other Macs of the
 // fleet (each is a replica: none is the main one, and any can add a machine); and the updater, which keeps a copy of
 // the release for the fleet's other machines. The widget shows the hub's view (HubFeed). Machines without Tokiscope
-// (Linux boxes) only report: the Add Machine… sheet installs agent-stats on them over SSH (agent-stats machines add).
+// (Linux boxes) only report: the Add Machine… sheet installs agent-stats on them over SSH (agent-stats fleet add).
 // An agent-stats installed on its own (install.sh, launchd jobs dev.agent-stats.*) keeps running as it is, and the
 // app only reads it until asked to take it over. An agent-stats from before fleets (0.5) runs the old way: one Mac
 // is the hub, the others join it with a line its Add Machine… shows.
@@ -803,9 +803,9 @@ final class ActionButton: NSButton {
 }
 
 // The window that adds a machine to the fleet. It lists what agent-stats finds on the tailnet and the local network
-// (machines discover), each with the shortest way in: Install for a Linux box or a Mac without Tokiscope, over SSH
-// (machines add, whose steps show as they happen), "open Tokiscope on it" for a Mac that has it; a field for any
-// other SSH target; and, for a machine this Mac can't reach by SSH, a line to paste there (machines invite). SSH
+// (fleet discover), each with the shortest way in: Install for a Linux box or a Mac without Tokiscope, over SSH
+// (fleet add, whose steps show as they happen), "open Tokiscope on it" for a Mac that has it; a field for any
+// other SSH target; and, for a machine this Mac can't reach by SSH, a line to paste there (fleet invite). SSH
 // runs with your keys and ~/.ssh/config, and never asks for a password: when it would, the window says how to fix it.
 final class AddMachineWindow: NSObject, NSWindowDelegate {
     private static let width: CGFloat = 480, inner: CGFloat = 440
@@ -927,7 +927,7 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
     private func discover() {
         set(found, [Self.text("Looking…", small: true)])
         DispatchQueue.global().async {
-            let r = Result { try Stats.json(["machines", "discover", "--timeout", "3s"], timeout: 30) }
+            let r = Result { try Stats.json(["fleet", "discover", "--timeout", "3s"], timeout: 30) }
             DispatchQueue.main.async {
                 switch r {
                 case .success(let v): self.list(v as? [[String: Any]] ?? [])
@@ -993,7 +993,7 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
             views.append(r)
         }
         set(progress, views)
-        var args = ["machines", "add", "--ssh", target, "--json"]
+        var args = ["fleet", "add", "--ssh", target, "--json"]
         if replace { args.append("--replace") }
         var ended = false
         adding = Stats.stream(args, line: { [weak self] e in
@@ -1081,7 +1081,7 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
         set(inviteBox, [Self.text("Making a line…", small: true)])
         let go = {
             DispatchQueue.global().async {
-                let r = Result { try Stats.json(["machines", "invite"], timeout: 30) }
+                let r = Result { try Stats.json(["fleet", "invite"], timeout: 30) }
                 DispatchQueue.main.async {
                     guard case .success(let v) = r, let line = (v as? [String: Any])?["line"] as? String else {
                         if case .failure(let e) = r { self.set(self.inviteBox, [Self.text((e as? Stats.Failure)?.message ?? e.localizedDescription, small: true)]) }
@@ -1117,7 +1117,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     private var fleet: Bool?                              // the agent-stats here has fleets (nil: not known yet)
     private var replicaError: String?                     // why this Mac couldn't become a replica, for the menu
     private var node: String?                             // this Mac's name in the fleet
-    private var members: [[String: Any]] = []             // the fleet's machines (machines list), for the menu
+    private var members: [[String: Any]] = []             // the fleet's machines (fleet list), for the menu
     private var requests: [[String: Any]] = []            // pending join requests
     private var asked = Set<String>(), asking: String?, askAlert: NSAlert?, polling = false
     private var addWindow: AddMachineWindow?
@@ -1771,7 +1771,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     @objc private func setUp() {
         background("Looking for Your Machines…") { [weak self] in
             let fleet = Stats.hasFleet()
-            let found = fleet ? (try? Stats.json(["machines", "discover", "--timeout", "3s"], timeout: 30)) as? [[String: Any]] ?? [] : []
+            let found = fleet ? (try? Stats.json(["fleet", "discover", "--timeout", "3s"], timeout: 30)) as? [[String: Any]] ?? [] : []
             DispatchQueue.main.async { self?.fleet = fleet; self?.soon { fleet ? self?.offerFleets(found) : self?.offerHub() } }
             return nil
         }
@@ -1992,7 +1992,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         guard fleet == true, Stats.isReplica, !refreshing else { return }
         refreshing = true
         DispatchQueue.global().async {
-            let list = (try? Stats.json(["machines", "list"], timeout: 15)) as? [[String: Any]]
+            let list = (try? Stats.json(["fleet", "list"], timeout: 15)) as? [[String: Any]]
             let st = self.node == nil ? (try? Stats.json(["fleet", "status"], timeout: 15)) as? [String: Any] : nil
             DispatchQueue.main.async {
                 self.refreshing = false
@@ -2013,7 +2013,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         background("Removing \(name)…") { [weak self] in
-            try Stats.exec(["machines", "remove", machine], timeout: 30)
+            try Stats.exec(["fleet", "remove", machine], timeout: 30)
             DispatchQueue.main.async { self?.refreshMembers() }
             return nil
         }
