@@ -414,7 +414,7 @@ enum Stats {
         return o
     }
     static func version() -> String? { (try? exec(["version"]))?.split(separator: " ").dropFirst().first.map(String.init) }
-    // Whether the agent-stats the app carries has fleets (`fleet`, `machines`; 0.6 on): an older one says "unknown command".
+    // Whether the agent-stats the app carries has fleets (`fleet`; 0.6 on): an older one says "unknown command".
     static func hasFleet() -> Bool {
         guard bundled else { return false }
         do { try exec(["fleet", "status", "--json"], timeout: 10); return true }
