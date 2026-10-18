@@ -1,0 +1,12 @@
+name: ci
+# The app builds (ad hoc signed) with the pinned agent-stats and Sparkle.
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./build.sh

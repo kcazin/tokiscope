@@ -1,0 +1,54 @@
+name: release
+# A v* tag: the DMG, signed with the Developer ID and notarized, and the update feed, published as a GitHub release.
+# Installed apps read releases/latest/download/appcast.xml, so publishing the release is what ships the update.
+# Secrets: DEVELOPER_ID_P12 (base64 of the certificate and its key, .p12) and DEVELOPER_ID_P12_PASSWORD; ASC_KEY_ID,
+# ASC_ISSUER_ID and ASC_KEY_CONTENT (base64 of the .p8), an App Store Connect API key for notarization;
+# SPARKLE_PRIVATE_KEY, the update signing key (generate_keys -x).
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Signing keys
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          K="$RUNNER_TEMP/keys"; mkdir -p "$K"; chmod 700 "$K"
+          KC="$RUNNER_TEMP/signing.keychain-db" KCPW=$(uuidgen)
+          echo "$P12" | base64 --decode > "$K/id.p12"
+          security create-keychain -p "$KCPW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KCPW" "$KC"
+          security import "$K/id.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPW" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          ID=$(security find-identity -v -p codesigning "$KC" | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)
+          [ -n "$ID" ] || { echo "no Developer ID Application identity in DEVELOPER_ID_P12" >&2; exit 1; }
+          echo "$ASC_KEY_CONTENT" | base64 --decode > "$K/asc.p8"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$K/sparkle.key"
+          rm "$K/id.p12"
+          { echo "SIGN_IDENTITY=$ID"; echo "ASC_KEY_PATH=$K/asc.p8"; echo "SPARKLE_KEY_FILE=$K/sparkle.key"; } >> "$GITHUB_ENV"
+      - name: Build, sign, notarize
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: ./dist.sh "${GITHUB_REF_NAME#v}"
+      - name: Check
+        run: |
+          spctl --assess --type open --context context:primary-signature -v "build/dist/Tokiscope-${GITHUB_REF_NAME#v}.dmg"
+          xcrun stapler validate build/Tokiscope.app
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" build/dist/* --title "Tokiscope ${GITHUB_REF_NAME#v}" --generate-notes
+      - name: Clean up
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"; security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true

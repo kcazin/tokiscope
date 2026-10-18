@@ -1,0 +1,38 @@
+name: agent-stats
+# Daily: when agent-stats has a newer release than agent-stats.pin, a pull request that pins it, with the SHA256 of
+# both Mac archives from the release's SHA256SUMS. (Its checks don't run on their own: a PR opened with the workflow's
+# token starts no workflows. Close and reopen it, or push to it, to build it.)
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          LATEST=$(gh release view -R kcazin/agent-stats --json tagName --jq .tagName | sed 's/^v//')
+          PINNED=$(sed -n 's/^version=//p' agent-stats.pin)
+          [ "$LATEST" != "$PINNED" ] || { echo "agent-stats $PINNED is the latest"; exit 0; }
+          BRANCH="agent-stats-$LATEST"
+          if git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null; then echo "$BRANCH exists"; exit 0; fi
+          SUMS=$(curl -fsSL "https://github.com/kcazin/agent-stats/releases/download/v$LATEST/SHA256SUMS")
+          sed -i "s/^version=.*/version=$LATEST/" agent-stats.pin
+          for T in aarch64-apple-darwin x86_64-apple-darwin; do
+            S=$(echo "$SUMS" | awk -v n="agent-stats-$LATEST-$T.tar.gz" '$2 == n { print $1 }')
+            [ -n "$S" ] || { echo "SHA256SUMS of $LATEST has no $T archive" >&2; exit 1; }
+            sed -i "s/^$T=.*/$T=$S/" agent-stats.pin
+          done
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git commit -am "Pin agent-stats $LATEST"
+          git push origin "$BRANCH"
+          gh pr create --title "Pin agent-stats $LATEST" --body "agent-stats [v$LATEST](https://github.com/kcazin/agent-stats/releases/tag/v$LATEST), with the SHA256 of both Mac archives from its SHA256SUMS. Merging and tagging a Tokiscope release ships it to every installed app."

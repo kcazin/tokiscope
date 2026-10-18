@@ -5,12 +5,14 @@
 // the app runs on the main Mac (Stats), so every repository shows by name (HubFeed); or from a relay, when one is set
 // and the hub can't be reached (RelayFeed). Both are streamed, so a change shows within a second or two, and polled
 // when there is no stream.
+// It updates itself (Sparkle) from the GitHub releases, which build.sh and dist.sh make.
 // In bubble mode it is a small floating bubble instead (lab/bubble.html): hover it for a card with more, click it
 // for the layout, drag it anywhere. The window stays at the full size the page asks for (it never resizes on hover, which
 // would make the web view flash) and lets the pointer through except over the bubble and whatever is showing.
 
 import Cocoa
 import ServiceManagement
+import Sparkle
 import SystemConfiguration
 import WebKit
 
@@ -539,6 +541,17 @@ enum Stats {
         return list
     }
 
+    // After an update the jobs still run the agent-stats of the old app, until they restart on the new one.
+    static func restartIfUpdated() {
+        let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        let last = UserDefaults.standard.string(forKey: "jobsStartedBy")
+        UserDefaults.standard.set(v, forKey: "jobsStartedBy")
+        guard let last, last != v else { return }
+        for (job, label) in [(hubJob, "hub"), (report, "report"), (updater, "updater")] where job.status == .enabled {
+            try? restart("com.kilcazn.tokiscope.\(label)")
+        }
+    }
+
     // Stops the app's jobs (config and stats stay).
     static func stop() throws {
         for job in [report, hubJob, updater] where [.enabled, .requiresApproval].contains(job.status) {
@@ -605,7 +618,8 @@ final class BundlePages: NSObject, WKURLSchemeHandler {
 }
 
 @main
-final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, WKScriptMessageHandler {
+final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, WKScriptMessageHandler, SPUUpdaterDelegate,
+                 SPUStandardUserDriverDelegate {
     private var panel: Panel!
     private var web: WKWebView!
     private var glass: NSVisualEffectView!
@@ -619,6 +633,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     private let pages = BundlePages()
     private var busy: String?                             // what agent-stats is being set up to do, for the menu
     private var statsVersion: String?
+    // Updates: only a release build has a feed (build.sh), so a local build never replaces itself.
+    private var updates: SPUStandardUpdaterController?
 
     static func main() {
         let app = NSApplication.shared
@@ -725,8 +741,15 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         relay.onUpdate = { [weak self] js in self?.feedPages().forEach { $0.evaluateJavaScript("window.relayFeed?.(\(js))") } }
         relay.start()
         if CommandLine.arguments.contains("--settings") { openSettings() }
+        if Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil {
+            updates = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: self)
+        }
         if Stats.bundled {
-            DispatchQueue.global().async { let v = Stats.version(); DispatchQueue.main.async { self.statsVersion = v } }
+            DispatchQueue.global().async {
+                Stats.restartIfUpdated()
+                let v = Stats.version()
+                DispatchQueue.main.async { self.statsVersion = v }
+            }
             // First launch: which part this Mac plays. Asked once; the menu has it after.
             if !Stats.setUp, !UserDefaults.standard.bool(forKey: "setupOffered") {
                 UserDefaults.standard.set(true, forKey: "setupOffered")
@@ -1050,6 +1073,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         settings.keyEquivalent = ","
         _ = add("Reload", false, #selector(reload))
         _ = add("Open at Login", SMAppService.mainApp.status == .enabled, #selector(toggleLogin))
+        if let updates {
+            let check = menu.addItem(withTitle: "Check for Updates…", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
+            check.target = updates
+        }
         menu.addItem(.separator())
         let quit = menu.addItem(withTitle: "Quit Tokiscope", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
@@ -1145,6 +1172,17 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         default: break
         }
     }
+
+    // ---- Updates ------------------------------------------------------------------------------------------------
+    // A widget is rarely quit, so an update that has downloaded installs and relaunches at once rather than on quit,
+    // unless agent-stats is being set up.
+    func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem, immediateInstallationBlock: @escaping () -> Void) -> Bool {
+        guard busy == nil else { return false }
+        immediateInstallationBlock()
+        return true
+    }
+    // An app with no Dock icon gets Sparkle's quieter reminders when it checks on its own.
+    var supportsGentleScheduledUpdateReminders: Bool { true }
 
     // ---- agent-stats ----------------------------------------------------------------------------------------------
     // Runs `work` off the main thread with `doing` in the menu, then says how it went.

@@ -44,6 +44,23 @@ them to the hub. The widget shows the hub's view.
 release `agent-stats.pin` names, checks both Mac archives against the pin and merges them into one universal binary
 (`Contents/Helpers/agent-stats`), next to its launchd jobs (`agents/`, in `Contents/Library/LaunchAgents`).
 `AGENT_STATS_BIN=<path> ./build.sh` ships a local build instead (`cargo build --release` in an agent-stats checkout).
+Sparkle, which updates the app, is pinned the same way in build.sh. A local build is signed ad hoc and never updates
+itself.
+
+## Releases
+
+Push a `v1.2.3` tag. The release workflow runs `dist.sh 1.2.3`: a universal build signed with the Developer ID and the
+hardened runtime, notarized and stapled, in `Tokiscope-1.2.3.dmg`, and `appcast.xml`, the update feed, signed with the
+Sparkle key. It publishes both as the GitHub release. Installed apps read
+`releases/latest/download/appcast.xml` daily (or *Check for Updates…*), download the update, install it and relaunch,
+then restart agent-stats' background items on the new binary.
+
+- Secrets: `DEVELOPER_ID_P12` (base64 of the Developer ID Application certificate and key) and
+  `DEVELOPER_ID_P12_PASSWORD`; `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_CONTENT` (base64 of the `.p8`), an App Store
+  Connect API key for notarization; `SPARKLE_PRIVATE_KEY`.
+- The Sparkle private key is also in the login keychain of the Mac that made it (`generate_keys`). Keep a copy: without
+  it, installed apps can't be sent another update. Its public half is `SUPublicEDKey` in Info.plist.
+- When agent-stats releases, a daily workflow opens a pull request that pins it (`agent-stats.pin`); merge it, then tag.
 
 The stats are streamed, so a change shows within a second or two: the app follows the hub's `/api/stream` (and a
 relay's `/stream`, applying its merge patches) and pushes each update into the page (`window.hubFeed`,

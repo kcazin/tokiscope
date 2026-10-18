@@ -6,13 +6,20 @@
   <key>CFBundleName</key><string>Tokiscope</string>
   <key>CFBundleExecutable</key><string>Tokiscope</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <!-- A release build sets both from its tag (build.sh with TOKISCOPE_VERSION). -->
+  <key>CFBundleShortVersionString</key><string>0.0.0</string>
+  <key>CFBundleVersion</key><string>0.0.0</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
   <!-- Plain http: a local copy of the pages, and the stats hub on the tailnet (100.x addresses, which ATS doesn't count
        as local). -->
   <key>NSAppTransportSecurity</key>
   <dict><key>NSAllowsArbitraryLoads</key><true/></dict>
+  <!-- Updates (Sparkle). A release build adds the feed (SUFeedURL), so a local build never updates itself. Every update
+       is signed with the private half of this key (the SPARKLE_PRIVATE_KEY secret). They're checked for daily,
+       downloaded and installed quietly. -->
+  <key>SUPublicEDKey</key><string>6Z6Zda5vMVXi7imJNMbmXed4kmNDJC1DbLPHootXTD4=</string>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUAutomaticallyUpdate</key><true/>
 </dict>
 </plist>
