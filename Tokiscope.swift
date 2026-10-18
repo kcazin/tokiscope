@@ -1,10 +1,10 @@
 // Tokiscope: your agents at work (the machines carrying today's tokens) and the projects they go to, in a small window
 // that floats over the desktop. It shows one of the layouts in lab/ (?only=<layout>), from the copy bundled in the app
 // (BundlePages) or a local copy. A menu bar item picks the layout and its zoom, and sets the rest:
-// click-through, move and resize, background, above windows or on the desktop. The stats come from the hub, which
-// the app runs on the main Mac (Stats), so every repository shows by name (HubFeed); or from a relay, when one is set
-// and the hub can't be reached (RelayFeed). Both are streamed, so a change shows within a second or two, and polled
-// when there is no stream.
+// click-through, move and resize, background, above windows or on the desktop. The stats come from the hub the app
+// runs on this Mac (Stats): every Mac of the fleet runs one and keeps everyone's stats, so every repository shows by
+// name (HubFeed), even while the other Macs sleep; or from a relay, when one is set and no hub can be reached
+// (RelayFeed). Both are streamed, so a change shows within a second or two, and polled when there is no stream.
 // It updates itself (Sparkle) from the GitHub releases, which build.sh and dist.sh make.
 // In bubble mode it is a small floating bubble instead (lab/bubble.html): hover it for a card with more, click it
 // for the layout, drag it anywhere. The window stays at the full size the page asks for (it never resizes on hover, which
@@ -171,14 +171,19 @@ final class EventStream: NSObject, URLSessionDataDelegate {
 // only machines it trusts, such as its tailnet), or the old reporter's launchd job (HUB_URL). Without the stream (an
 // older hub: 404, or it keeps failing) it reads /api/state and /api/repos every 15 s, and tries the stream again every
 // five minutes. When no route answers, the page goes back to the relay on its own, if there is one.
+// The stream also says who asks to join the fleet (`requests`, the pending join requests), for the app to approve.
 final class HubFeed {
     struct Route: Equatable { let url: String; let token: String? }
     private(set) var route: Route?                        // the one that answered last
     private(set) var latest: String?                      // the arguments for window.hubFeed, as JS
     var onUpdate: ((String) -> Void)?
+    var onRequests: (([[String: Any]]) -> Void)?
     private var timer: Timer?, busy = false
     private var stream: EventStream?, state: String?, repos: String?, fails = 0, retryAt = Date.distantPast
     var live: Bool { stream?.healthy == true }
+    // The stream in use has sent `requests` (an older hub never does): no need to ask agent-stats for them.
+    private(set) var sawRequests = false
+    var requestsLive: Bool { live && sawRequests }
 
     static func routes() -> [Route] {
         var found: [Route] = Stats.isHub ? [Route(url: Stats.localHub, token: nil)] : []
@@ -261,6 +266,7 @@ final class HubFeed {
         stream = s
         s.onEvent = { [weak self] name, data in
             guard let self, let json = try? JSONSerialization.jsonObject(with: Data(data.utf8)) else { return }
+            if name == "requests", let list = json as? [[String: Any]] { self.sawRequests = true; self.onRequests?(list); return }
             if name == "live", json is [String: Any] { self.state = data } else if name == "repos", json is [Any] { self.repos = data } else { return }
             self.fails = 0
             guard let state = self.state, let repos = self.repos else { return }
@@ -271,7 +277,7 @@ final class HubFeed {
         // polling meanwhile, and after five failures in a row every five minutes.
         s.onEnd = { [weak self] status in
             guard let self else { return }
-            self.stream = nil; self.state = nil; self.repos = nil; self.fails += 1
+            self.stream = nil; self.state = nil; self.repos = nil; self.sawRequests = false; self.fails += 1
             let wait: Double = status != nil || self.fails > 5 ? 300 : self.fails == 1 ? 0 : pow(2, Double(self.fails - 1))
             self.retryAt = Date() + wait
             if wait < 300 { DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in self?.connect() } } else { self.fetch() }
@@ -335,11 +341,14 @@ final class RelayFeed {
 
 // ---- agent-stats --------------------------------------------------------------------------------------------------
 // The app carries agent-stats (Contents/Helpers/agent-stats, see build.sh) and runs it as its background items, the
-// launchd jobs in Contents/Library/LaunchAgents: the reporter on every Mac, which counts the tokens its coding agents
-// use and sends them to the hub; on the main Mac also the hub, which keeps every machine's stats, and the updater,
-// which keeps a copy of the release for the hub's other machines. The widget shows the hub's view (HubFeed). An
-// agent-stats installed on its own (install.sh, launchd jobs dev.agent-stats.*) keeps running as it is, and the app
-// only reads it until asked to take it over.
+// launchd jobs in Contents/Library/LaunchAgents: the reporter, which counts the tokens this Mac's coding agents use and
+// sends them to the hub here; the hub, which keeps every machine's stats and syncs them with the other Macs of the
+// fleet (each is a replica: none is the main one, and any can add a machine); and the updater, which keeps a copy of
+// the release for the fleet's other machines. The widget shows the hub's view (HubFeed). Machines without Tokiscope
+// (Linux boxes) only report: the Add Machine… sheet installs agent-stats on them over SSH (agent-stats fleet add).
+// An agent-stats installed on its own (install.sh, launchd jobs dev.agent-stats.*) keeps running as it is, and the
+// app only reads it until asked to take it over. An agent-stats from before fleets (0.5) runs the old way: one Mac
+// is the hub, the others join it with a line its Add Machine… shows.
 enum Stats {
     struct Failure: Error { let message: String }
     static let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/agent-stats")
@@ -362,6 +371,8 @@ enum Stats {
         }
     }
     static var isHub: Bool { FileManager.default.fileExists(atPath: hubToml.path) }
+    // The hub here is one of the fleet's replicas (agent-stats fleet create / fleet replica wrote its [fleet]).
+    static var isReplica: Bool { ((try? String(contentsOf: hubToml, encoding: .utf8)) ?? "").contains("[fleet]") }
     static var joined: Bool { ((try? String(contentsOf: configToml, encoding: .utf8)) ?? "").contains("[[hub]]") }
     static var setUp: Bool { isHub || joined || !separate.isEmpty }
     static var label: String { (SCDynamicStoreCopyComputerName(nil, nil) as String?) ?? ProcessInfo.processInfo.hostName }
@@ -403,6 +414,51 @@ enum Stats {
         return o
     }
     static func version() -> String? { (try? exec(["version"]))?.split(separator: " ").dropFirst().first.map(String.init) }
+    // Whether the agent-stats the app carries has fleets (`fleet`; 0.6 on): an older one says "unknown command".
+    static func hasFleet() -> Bool {
+        guard bundled else { return false }
+        do { try exec(["fleet", "status", "--json"], timeout: 10); return true }
+        catch { return !((error as? Failure)?.message.contains("unknown command") ?? false) }
+    }
+    // agent-stats with `args` and `--json`: what it printed, parsed.
+    static func json(_ args: [String], timeout: TimeInterval = 60) throws -> Any {
+        let out = try exec(args + ["--json"], timeout: timeout)
+        guard let v = try? JSONSerialization.jsonObject(with: Data(out.utf8)) else {
+            throw Failure(message: "agent-stats \(args.prefix(2).joined(separator: " ")) didn't answer in JSON.")
+        }
+        return v
+    }
+    // agent-stats with `args`, read as it goes: each line that is a JSON object goes to `line`, then `done` gets the exit
+    // status and what it said on stderr, both on the main thread. The process is returned, to stop it. Doesn't block.
+    @discardableResult static func stream(_ args: [String], line: @escaping ([String: Any]) -> Void,
+                                          done: @escaping (Int32, String) -> Void) -> Process {
+        let p = Process(), out = Pipe(), err = Pipe()
+        p.executableURL = helper; p.arguments = args; p.standardOutput = out; p.standardError = err
+        do { try p.run() } catch {
+            let why = "agent-stats: \(error.localizedDescription)"
+            DispatchQueue.main.async { done(-1, why) }
+            return p
+        }
+        var said = Data()
+        let errDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { said = err.fileHandleForReading.readDataToEndOfFile(); errDone.signal() }
+        DispatchQueue.global().async {
+            var buf = Data()
+            while true {
+                let chunk = out.fileHandleForReading.availableData
+                if chunk.isEmpty { break }
+                buf.append(chunk)
+                while let nl = buf.firstIndex(of: 10) {
+                    let l = buf[buf.startIndex..<nl]; buf = Data(buf[(nl + 1)...])
+                    if let o = try? JSONSerialization.jsonObject(with: l) as? [String: Any] { DispatchQueue.main.async { line(o) } }
+                }
+            }
+            p.waitUntilExit(); errDone.wait()
+            let status = p.terminationStatus, e = String(decoding: said, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            DispatchQueue.main.async { done(status, e) }
+        }
+        return p
+    }
     // Starts one of the app's jobs (it then starts with every login), unless it runs already.
     static func start(_ job: SMAppService) throws {
         guard job.status != .enabled else { return }
@@ -432,6 +488,7 @@ enum Stats {
         throw Failure(message: "The hub didn't start (its log: ~/.local/state/agent-stats/logs/hub.log).")
     }
     // This Mac's name on dashboards, unless config.toml says one already.
+    static func prepareJoin() { try? writeLabel() }
     private static func writeLabel() throws {
         guard !FileManager.default.fileExists(atPath: configToml.path) else { return }
         try write(configToml, "# agent-stats reporter config. See docs/ARCHITECTURE.md.\nlabel = \"\(tomlString(label))\"\n")
@@ -470,6 +527,11 @@ enum Stats {
         try start(hubJob)
         try start(updater)
         try waitForHub()
+        try joinLocal()
+        try start(report)
+    }
+    // The reporter here, joined to the hub here over loopback, unless it is already.
+    private static func joinLocal() throws {
         let state = ProcessInfo.processInfo.environment["XDG_STATE_HOME"].map { URL(fileURLWithPath: $0).appendingPathComponent("agent-stats") }
             ?? home.appendingPathComponent(".local/state/agent-stats")
         let id = ((try? String(contentsOf: state.appendingPathComponent("hub-id"), encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -478,8 +540,60 @@ enum Stats {
             guard let p = parse(try joinLine(try exec(["hub", "pair", "--label", label]))) else { throw Failure(message: "agent-stats hub pair didn't print a code.") }
             try exec(["join", localHub, "--code", p.code])
         }
+    }
+
+    // ---- Fleets (an agent-stats that has them, see hasFleet)
+    // A new fleet, this Mac its first replica: agent-stats writes the hub's config (`fleet create`), then the hub, the
+    // updater and the reporter run here.
+    static func createFleet() throws {
+        try writeLabel()
+        if !isHub { try exec(["fleet", "create", "--json"], timeout: 60) }
+        try startReplica()
+    }
+    // The jobs of a replica: the hub (waited for), the updater, the reporter joined to the hub here.
+    static func startReplica() throws {
+        try start(hubJob)
+        try start(updater)
+        try waitForHub()
+        try joinLocal()
         try start(report)
     }
+    // Before fleets one Mac ran the hub and the others only reported to it. Now each Mac is a replica: it runs the hub
+    // too and keeps everyone's stats, so its widget works while the others sleep. agent-stats turns this Mac's setup
+    // into one (`fleet replica`: the old hub becomes the fleet's first replica, a Mac that only reported gets a hub of
+    // its own), then the hub starts, or restarts on its new config. Nothing changes if that fails: the jobs that ran
+    // keep running as they were.
+    static var wantsReplica: Bool {
+        separate.filter { $0 != "relay" }.isEmpty && (isHub || joined) && !isReplica && !stopped
+    }
+    static func becomeReplica() throws {
+        guard wantsReplica else { return }
+        let running = hubJob.status == .enabled
+        try exec(["fleet", "replica", "--json"], timeout: 120)
+        if running { try restart("com.kilcazn.tokiscope.hub"); Thread.sleep(forTimeInterval: 1) } else { try start(hubJob) }
+        try start(updater)
+        try waitForHub()
+        if joined { try start(report) }
+    }
+    // A line that some Mac's Add Machine… showed before fleets (agent-stats join <url> --code <code>): joins with it,
+    // then this Mac becomes a replica too if its agent-stats can.
+    static func joinWithLine(_ line: String, fleet: Bool) throws {
+        try join(line)
+        if fleet { try becomeReplica() }
+    }
+    static func approve(_ id: String) throws { try exec(["fleet", "approve", id], timeout: 30) }
+    static func deny(_ id: String) throws { try exec(["fleet", "deny", id], timeout: 30) }
+
+    // Opens Terminal with `command` (ssh-copy-id, which asks for the password there), without asking for Automation.
+    static func inTerminal(_ command: String) throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("tokiscope-\(UUID().uuidString.prefix(8)).command")
+        try write(file, "#!/bin/sh\n\(command)\necho\necho 'Done: go back to Tokiscope and choose Retry.'\n")
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        let terminal = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+        NSWorkspace.shared.open([file], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
+    }
+    // `s` as one word for sh.
+    static func shellQuoted(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
     // Another Mac's hub, from the line its Add Machine… shows.
     static func join(_ line: String) throws {
@@ -493,6 +607,13 @@ enum Stats {
     // first opened to the network: it listens on every interface and tells reporters its Tailscale address, its
     // .local name and its address on the local network, in that order.
     static func pair() throws -> String {
+        try openHub()
+        return try joinLine(try exec(["hub", "pair"]))
+    }
+    // Only this Mac reaches the hub here: its hub.toml listens on loopback (a hub.toml the app wrote, before fleets).
+    static var hubOnLoopback: Bool { ((try? String(contentsOf: hubToml, encoding: .utf8)) ?? "").contains("listen = \"127.0.0.1:") }
+    // Opens the hub to the network, if the app wrote its hub.toml and only this Mac reaches it (see pair).
+    static func openHub() throws {
         let text = (try? String(contentsOf: hubToml, encoding: .utf8)) ?? ""
         if text.hasPrefix(mark), let listen = text.split(separator: "\n").first(where: { $0.hasPrefix("listen = \"127.0.0.1:") }) {
             let port = hubPort
@@ -511,7 +632,6 @@ enum Stats {
             Thread.sleep(forTimeInterval: 1)
             try waitForHub()
         }
-        return try joinLine(try exec(["hub", "pair"]))
     }
 
     // This Mac's Tailscale IPv4, when Tailscale's command line answers. (Other VPNs use its range too.)
@@ -670,6 +790,314 @@ final class BundlePages: NSObject, WKURLSchemeHandler {
     }
 }
 
+// ---- Add Machine --------------------------------------------------------------------------------------------------
+// A button that runs a closure.
+final class ActionButton: NSButton {
+    private var run: (() -> Void)?
+    convenience init(_ title: String, primary: Bool = false, _ run: @escaping () -> Void) {
+        self.init(frame: .zero)
+        self.title = title; bezelStyle = .rounded; self.run = run; target = self; action = #selector(fire)
+        if primary { keyEquivalent = "\r" }
+    }
+    @objc private func fire() { run?() }
+}
+
+// The window that adds a machine to the fleet. It lists what agent-stats finds on the tailnet and the local network
+// (fleet discover), each with the shortest way in: Install for a Linux box or a Mac without Tokiscope, over SSH
+// (fleet add, whose steps show as they happen), "open Tokiscope on it" for a Mac that has it; a field for any
+// other SSH target; and, for a machine this Mac can't reach by SSH, a line to paste there (fleet invite). SSH
+// runs with your keys and ~/.ssh/config, and never asks for a password: when it would, the window says how to fix it.
+final class AddMachineWindow: NSObject, NSWindowDelegate {
+    private static let width: CGFloat = 480, inner: CGFloat = 440
+    private static let steps = [("connect", "Connecting"), ("route", "Finding a way back to this Mac"), ("install", "Installing agent-stats"),
+                                ("join", "Joining and starting the reporter"), ("report", "Waiting for its first report")]
+    private struct Step { let spin: NSProgressIndicator; let mark: NSImageView; let title: NSTextField; let detail: NSTextField }
+
+    let window: NSWindow
+    var onAdded: (() -> Void)?                            // a machine reports now
+    var onClose: (() -> Void)?
+    var openHub: ((@escaping () -> Void) -> Void)?        // opens the hub to the network, then calls back
+    private let stack = NSStackView(), found = NSStackView(), progress = NSStackView(), inviteBox = NSStackView()
+    private let target = NSTextField()
+    private var adding: Process?, stopping = false, rows: [String: Step] = [:], ourFleet: String?
+    private var stop: NSButton?
+
+    override init() {
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 300), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        super.init()
+        window.title = "Add a Machine"
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        for s in [stack, found, progress, inviteBox] { s.orientation = .vertical; s.alignment = .leading; s.spacing = 8 }
+        stack.spacing = 12
+        stack.edgeInsets = NSEdgeInsets(top: 18, left: 20, bottom: 20, right: 20)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        let content = NSView()
+        content.addSubview(stack)
+        window.contentView = content
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor), stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: content.topAnchor), stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            stack.widthAnchor.constraint(equalToConstant: Self.width),
+        ])
+
+        let refresh = ActionButton("Look Again") { [weak self] in self?.discover() }
+        refresh.controlSize = .small
+        stack.addArrangedSubview(row([Self.heading("Found on your tailnet and local network"), NSView(), refresh]))
+        stack.addArrangedSubview(found)
+        stack.addArrangedSubview(Self.heading("Somewhere else"))
+        target.placeholderString = "user@host, IP, or a name from ~/.ssh/config"
+        target.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        target.widthAnchor.constraint(equalToConstant: Self.inner - 90).isActive = true
+        let connect = ActionButton("Connect") { [weak self] in
+            guard let self else { return }
+            let t = self.target.stringValue.trimmingCharacters(in: .whitespaces)
+            if !t.isEmpty { self.add(t) }
+        }
+        stack.addArrangedSubview(row([target, connect]))
+        stack.addArrangedSubview(progress)
+        progress.isHidden = true
+        stack.setCustomSpacing(20, after: progress)
+        stack.addArrangedSubview(Self.heading("No SSH? Run this on the machine"))
+        stack.addArrangedSubview(inviteBox)
+        resetInvite()
+    }
+
+    func show() {
+        discover()
+        DispatchQueue.global().async {
+            let st = (try? Stats.json(["fleet", "status"], timeout: 15)) as? [String: Any]
+            DispatchQueue.main.async {
+                self.ourFleet = st?["fleetId"] as? String
+                if let name = st?["name"] as? String, !name.isEmpty { self.window.title = "Add a Machine to “\(name)”" }
+            }
+        }
+        fit()
+        window.center()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+    func windowWillClose(_ note: Notification) { stopping = true; adding?.terminate(); onClose?() }
+    // Installs on `target` over SSH, as Install or Connect do.
+    func install(_ target: String) { add(target) }
+
+    // ---- Views
+    private static func heading(_ s: String) -> NSTextField {
+        let l = NSTextField(labelWithString: s)
+        l.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold); l.textColor = .secondaryLabelColor
+        return l
+    }
+    private static func text(_ s: String, small: Bool = false, bold: Bool = false, color: NSColor? = nil, width: CGFloat = inner) -> NSTextField {
+        let l = NSTextField(wrappingLabelWithString: s)
+        l.font = small ? .systemFont(ofSize: NSFont.smallSystemFontSize) : bold ? .boldSystemFont(ofSize: NSFont.systemFontSize) : .systemFont(ofSize: NSFont.systemFontSize)
+        l.textColor = color ?? (small ? .secondaryLabelColor : .labelColor)
+        l.preferredMaxLayoutWidth = width
+        l.isSelectable = true
+        return l
+    }
+    private func row(_ views: [NSView], width: CGFloat = inner) -> NSStackView {
+        let r = NSStackView(views: views)
+        r.orientation = .horizontal; r.alignment = .centerY; r.spacing = 8
+        r.widthAnchor.constraint(equalToConstant: width).isActive = true
+        return r
+    }
+    private static func symbol(_ name: String, _ color: NSColor? = nil) -> NSImageView {
+        let v = NSImageView(image: NSImage(systemSymbolName: name, accessibilityDescription: nil) ?? NSImage())
+        if let color { v.contentTintColor = color }
+        v.widthAnchor.constraint(equalToConstant: 18).isActive = true
+        return v
+    }
+    private func set(_ s: NSStackView, _ views: [NSView]) {
+        s.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        views.forEach { s.addArrangedSubview($0) }
+        s.isHidden = views.isEmpty                        // and takes no room
+        fit()
+    }
+    // The window keeps its top edge and takes the height its content needs.
+    private func fit() {
+        stack.layoutSubtreeIfNeeded()
+        let content = NSRect(origin: .zero, size: NSSize(width: Self.width, height: stack.fittingSize.height))
+        var f = window.frame
+        let size = window.frameRect(forContentRect: content).size, top = f.maxY
+        f.size = size; f.origin.y = top - size.height
+        window.setFrame(f, display: true)
+    }
+
+    // ---- What agent-stats finds
+    private func discover() {
+        set(found, [Self.text("Looking…", small: true)])
+        DispatchQueue.global().async {
+            let r = Result { try Stats.json(["fleet", "discover", "--timeout", "3s"], timeout: 30) }
+            DispatchQueue.main.async {
+                switch r {
+                case .success(let v): self.list(v as? [[String: Any]] ?? [])
+                case .failure(let e): self.set(self.found, [Self.text((e as? Stats.Failure)?.message ?? e.localizedDescription, small: true)])
+                }
+            }
+        }
+    }
+    private func list(_ machines: [[String: Any]]) {
+        // This Mac and the members first, then the rest, each by name.
+        let sorted = machines.sorted {
+            let a = ($0["self"] as? Bool == true ? 0 : $0["member"] as? Bool == true ? 1 : 2, ($0["name"] as? String ?? "").lowercased())
+            let b = ($1["self"] as? Bool == true ? 0 : $1["member"] as? Bool == true ? 1 : 2, ($1["name"] as? String ?? "").lowercased())
+            return a < b
+        }
+        let views = sorted.map(machineRow)
+        set(found, views.isEmpty ? [Self.text("Nothing found. Is the machine on, and on your tailnet or this network? You can still connect to it below.", small: true)] : views)
+    }
+    private func machineRow(_ m: [String: Any]) -> NSView {
+        let host = m["host"] as? String ?? m["name"] as? String ?? "?", name = m["name"] as? String ?? host
+        let os = m["os"] as? String, online = m["online"] as? Bool ?? true, me = m["self"] as? Bool == true
+        let member = m["member"] as? Bool == true, stats = m["agentStats"] as? [String: Any]
+        let sources = (m["sources"] as? [String] ?? []).map { ["tailscale": "Tailscale", "bonjour": "Bonjour"][$0] ?? $0 }
+        var detail = [["linux": "Linux", "macos": "macOS", "windows": "Windows"][os ?? ""]].compactMap { $0 } + sources
+        var trailing: NSView? = nil, dim = false, note: String?
+        if me { detail.append("this Mac"); trailing = Self.symbol("checkmark", .systemGreen); dim = true }
+        else if member { detail.append("in the fleet"); trailing = Self.symbol("checkmark", .systemGreen); dim = true }
+        else if !online { detail.append("offline"); dim = true }
+        else if os == "windows" { detail.append("not supported"); dim = true }
+        else {
+            if let s = stats, let fleet = s["fleetId"] as? String, fleet != ourFleet, ["hub", "replica"].contains(s["role"] as? String ?? "") {
+                note = "Runs another fleet\((s["name"] as? String).map { " (“\($0)”)" } ?? ""): installing moves it to this one."
+            } else if os == "macos" {
+                note = "Has Tokiscope? Open it there and choose Join instead."
+            }
+            trailing = ActionButton("Install") { [weak self] in self?.add(host) }
+        }
+        let icon = Self.symbol(os == "macos" ? "laptopcomputer" : os == "linux" ? "server.rack" : os == "windows" ? "pc" : "desktopcomputer")
+        let words = NSStackView(views: [Self.text(name, bold: true, width: Self.inner - 120), Self.text(detail.joined(separator: " · "), small: true, width: Self.inner - 120)]
+                                + (note.map { [Self.text($0, small: true, width: Self.inner - 120)] } ?? []))
+        words.orientation = .vertical; words.alignment = .leading; words.spacing = 1
+        let r = row([icon, words, NSView()] + (trailing.map { [$0] } ?? []))
+        r.alphaValue = dim ? 0.5 : 1
+        return r
+    }
+
+    // ---- Adding one over SSH
+    private func add(_ target: String, replace: Bool = false) {
+        stopping = true; adding?.terminate(); stopping = false
+        rows = [:]
+        let stop = ActionButton("Stop") { [weak self] in self?.stopping = true; self?.adding?.terminate() }
+        self.stop = stop
+        var views: [NSView] = [row([Self.text("Installing on \(target)", bold: true, width: Self.inner - 80), NSView(), stop])]
+        for (key, title) in Self.steps {
+            let spin = NSProgressIndicator(), mark = Self.symbol("circle", .tertiaryLabelColor)
+            spin.style = .spinning; spin.controlSize = .small; spin.isHidden = true
+            spin.widthAnchor.constraint(equalToConstant: 18).isActive = true
+            let t = Self.text(title, width: Self.inner - 40), d = Self.text("", small: true, width: Self.inner - 40)
+            d.isHidden = true
+            let words = NSStackView(views: [t, d]); words.orientation = .vertical; words.alignment = .leading; words.spacing = 1
+            let r = NSStackView(views: [spin, mark, words]); r.orientation = .horizontal; r.alignment = .firstBaseline; r.spacing = 6
+            rows[key] = Step(spin: spin, mark: mark, title: t, detail: d)
+            views.append(r)
+        }
+        set(progress, views)
+        var args = ["fleet", "add", "--ssh", target, "--json"]
+        if replace { args.append("--replace") }
+        var ended = false
+        adding = Stats.stream(args, line: { [weak self] e in
+            guard let self else { return }
+            if e["step"] as? String == "done" || e["state"] as? String == "error" { ended = true }
+            self.event(e, target: target)
+        }, done: { [weak self] status, said in
+            guard let self, !ended else { return }
+            self.adding = nil
+            self.failed(self.stopping ? "stopped" : "other", self.stopping ? "Stopped." : said.isEmpty ? "agent-stats stopped (status \(status))." : said, nil, target)
+        })
+    }
+    private func show(_ s: Step, _ state: String, _ detail: String?) {
+        s.spin.isHidden = state != "running"
+        if state == "running" { s.spin.startAnimation(nil) } else { s.spin.stopAnimation(nil) }
+        s.mark.isHidden = state == "running"
+        switch state {
+        case "ok": s.mark.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil); s.mark.contentTintColor = .systemGreen
+        case "error": s.mark.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: nil); s.mark.contentTintColor = .systemRed
+        default: break
+        }
+        if let detail, !detail.isEmpty { s.detail.stringValue = detail; s.detail.isHidden = false }
+    }
+    private func event(_ e: [String: Any], target: String) {
+        let step = e["step"] as? String ?? "", state = e["state"] as? String ?? ""
+        if step == "done" {
+            adding = nil; stop?.isHidden = true
+            for (k, _) in Self.steps { if let s = rows[k], !s.spin.isHidden || s.mark.contentTintColor != .systemGreen { show(s, "ok", nil) } }
+            let who = e["label"] as? String ?? e["machine"] as? String ?? target
+            progress.addArrangedSubview(row([Self.symbol("checkmark.seal.fill", .systemGreen), Self.text("\(who) is part of the fleet and reports now.", bold: true, width: Self.inner - 30)]))
+            fit()
+            onAdded?()
+            discover()
+            return
+        }
+        // A step that starts or ends settles the ones before it that said nothing (say, nothing to install).
+        if let i = Self.steps.firstIndex(where: { $0.0 == step }) {
+            for (k, _) in Self.steps[..<i] { if let s = rows[k], s.mark.contentTintColor != .systemGreen, s.mark.contentTintColor != .systemRed { show(s, "ok", nil) } }
+        }
+        if let s = rows[step] { show(s, state, e["detail"] as? String) }
+        if state == "error" {
+            adding = nil
+            failed(e["error"] as? String ?? "other", e["message"] as? String ?? "That didn't work.", e["hint"] as? String, target)
+        }
+        fit()
+    }
+    // What went wrong, and what to do about it.
+    private func failed(_ kind: String, _ message: String, _ hint: String?, _ target: String) {
+        stop?.isHidden = true
+        for (_, s) in rows where !s.spin.isHidden { show(s, "error", nil) }
+        var views: [NSView] = [Self.text(message, color: kind == "host-key-changed" ? .systemRed : nil)]
+        if let hint, !hint.isEmpty {
+            let h = Self.text(hint, small: true); h.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+            views.append(h)
+        }
+        let retry = ActionButton("Retry") { [weak self] in self?.add(target) }
+        var buttons: [NSView] = []
+        switch kind {
+        case "needs-key":
+            views.insert(Self.text("This Mac's SSH key isn't on \(target) yet. ssh-copy-id puts it there: it asks for the password once, in Terminal. (Or turn on Tailscale SSH on that machine.)", small: true), at: 1)
+            buttons = [ActionButton("Open Terminal (ssh-copy-id)", primary: true) { try? Stats.inTerminal("ssh-copy-id " + Stats.shellQuoted(target)) }, retry]
+        case "taken":
+            let name = target.split(separator: "@").last.map { String($0.split(separator: ".").first ?? $0) } ?? target
+            buttons = [ActionButton("Replace the Old “\(name)”", primary: true) { [weak self] in self?.add(target, replace: true) },
+                       ActionButton("Cancel") { [weak self] in self.map { $0.set($0.progress, []) } }]
+        case "no-route-back":
+            if Stats.hubOnLoopback {
+                views.append(Self.text("Only this Mac reaches its hub so far. Open it to your network (port \(Stats.hubPort), over Tailscale or your local network), then try again.", small: true))
+                buttons = [ActionButton("Open the Hub to the Network", primary: true) { [weak self] in self?.openHub? { self?.add(target) } }, retry]
+            } else { buttons = [retry] }
+        case "unsupported", "stopped": buttons = []
+        default: buttons = [retry]
+        }
+        if !buttons.isEmpty { views.append(row(buttons + [NSView()])) }
+        views.forEach { progress.addArrangedSubview($0) }
+        fit()
+    }
+
+    // ---- The line to paste
+    private func resetInvite() {
+        set(inviteBox, [Self.text("A one-time line that installs agent-stats and joins this fleet, for a machine this Mac can't reach by SSH (it must reach this Mac).", small: true),
+                        ActionButton("Make a Line") { [weak self] in self?.invite() }])
+    }
+    private func invite() {
+        set(inviteBox, [Self.text("Making a line…", small: true)])
+        let go = {
+            DispatchQueue.global().async {
+                let r = Result { try Stats.json(["fleet", "invite"], timeout: 30) }
+                DispatchQueue.main.async {
+                    guard case .success(let v) = r, let line = (v as? [String: Any])?["line"] as? String else {
+                        if case .failure(let e) = r { self.set(self.inviteBox, [Self.text((e as? Stats.Failure)?.message ?? e.localizedDescription, small: true)]) }
+                        return
+                    }
+                    let code = Self.text(line); code.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+                    self.set(self.inviteBox, [code, self.row([ActionButton("Copy") {
+                        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(line, forType: .string)
+                    }, Self.text("Works once, for 10 minutes.", small: true, width: 300), NSView()])])
+                }
+            }
+        }
+        if Stats.hubOnLoopback, let openHub { openHub(go) } else { go() }
+    }
+}
+
 @main
 final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, WKScriptMessageHandler, SPUUpdaterDelegate,
                  SPUStandardUserDriverDelegate {
@@ -686,6 +1114,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     private let pages = BundlePages()
     private var busy: String?                             // what agent-stats is being set up to do, for the menu
     private var statsVersion: String?
+    private var fleet: Bool?                              // the agent-stats here has fleets (nil: not known yet)
+    private var replicaError: String?                     // why this Mac couldn't become a replica, for the menu
+    private var node: String?                             // this Mac's name in the fleet
+    private var members: [[String: Any]] = []             // the fleet's machines (fleet list), for the menu
+    private var requests: [[String: Any]] = []            // pending join requests
+    private var asked = Set<String>(), asking: String?, askAlert: NSAlert?, polling = false
+    private var addWindow: AddMachineWindow?
     // Updates: only a release build has a feed (build.sh), so a local build never replaces itself.
     private var updates: SPUStandardUpdaterController?
 
@@ -698,13 +1133,31 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
-        // For scripts and tests: `Tokiscope --stats hub | join "<line>" | pair | take-over | start | stop | status` does
-        // what the menu would (start: the jobs this Mac's setup needs, afresh; stop: all of them), prints how it went
-        // and quits.
+        // For scripts and tests: `Tokiscope --stats create | replica | hub | join "<line>" | pair | take-over | start |
+        // stop | status` does what the menu would (create: a new fleet, this Mac its first replica; replica: this Mac
+        // becomes one; start: the jobs this Mac's setup needs, afresh; stop: all of them), prints how it went and quits.
+        // `--stats add-machine [<ssh target>]` opens only the Add Machine window (installing on the target right away, if
+        // one is given) and quits when it closes; `--stats request <url>` asks that Mac's fleet to let this Mac in.
         if let i = CommandLine.arguments.firstIndex(of: "--stats") {
             let a = Array(CommandLine.arguments.dropFirst(i + 1))
+            if a.first == "add-machine" {
+                fleet = true
+                showAddWindow()
+                addWindow?.onClose = { exit(0) }
+                if a.count > 1 { addWindow?.install(a[1]) }
+                print(addWindow?.window.windowNumber ?? 0); fflush(stdout)   // for screencapture -l
+                return
+            }
+            if a.first == "request", a.count > 1 {
+                fleet = true
+                requestJoin(a[1], URL(string: a[1])?.host ?? a[1])
+                Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in if self?.busy == nil { exit(0) } }
+                return
+            }
             do {
                 switch a.first {
+                case "create": try Stats.createFleet(); print("fleet created: hub and reporter running")
+                case "replica": try Stats.becomeReplica(); print(Stats.isReplica ? "this Mac is a replica" : "nothing to do")
                 case "hub": try Stats.becomeHub(); print("hub and reporter running")
                 case "join" where a.count > 1: try Stats.join(a[1]); print("reporter running")
                 case "pair": print(try Stats.pair())
@@ -712,7 +1165,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
                 case "stop": try Stats.stop(); print("stopped")
                 case "start": try Stats.startAfresh(); print("started")
                 case "status": print(Stats.summary(Stats.version())); print(HubFeed.routes().map { $0.url + ($0.token == nil ? "" : " (view token)") }.joined(separator: "\n"))
-                default: print("usage: Tokiscope --stats hub | join \"<line>\" | pair | take-over | start | stop | status"); exit(2)
+                default: print("usage: Tokiscope --stats create | replica | hub | join \"<line>\" | pair | take-over | start | stop | status | add-machine"); exit(2)
                 }
                 exit(0)
             } catch {
@@ -791,6 +1244,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         load()
         panel.orderFrontRegardless()
         hub.onUpdate = { [weak self] in self?.pushHub($0) }
+        hub.onRequests = { [weak self] in self?.gotRequests($0) }
         hub.start()
         pages.feed = relay
         relay.onUpdate = { [weak self] js in self?.feedPages().forEach { $0.evaluateJavaScript("window.relayFeed?.(\(js))") } }
@@ -802,9 +1256,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         if Stats.bundled {
             DispatchQueue.global().async {
                 Stats.restartIfUpdated()
-                let v = Stats.version()
-                DispatchQueue.main.async { self.statsVersion = v }
+                let v = Stats.version(), fleet = Stats.hasFleet()
+                DispatchQueue.main.async {
+                    self.statsVersion = v; self.fleet = fleet
+                    if fleet { self.becomeReplica(quietly: true); self.refreshMembers() }
+                }
             }
+            // Join requests, from agent-stats when the hub's stream doesn't say them.
+            Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.pollRequests() }
             // First launch: which part this Mac plays. Asked once; the menu has it after.
             if !Stats.setUp, !UserDefaults.standard.bool(forKey: "setupOffered") {
                 UserDefaults.standard.set(true, forKey: "setupOffered")
@@ -1117,8 +1576,17 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         else if Stats.bundled || Stats.setUp {
             if !Stats.setUp { _ = add("Set Up This Mac…", false, #selector(setUp)) }
             else {
+                for (i, r) in requests.enumerated() {
+                    let who = r["label"] as? String ?? r["machine"] as? String ?? "A machine"
+                    add("\(who) Asks to Join (\(App.spaced(r["digits"] as? String ?? "")))…", false, #selector(askRequest(_:))).tag = i
+                }
                 _ = add("Add Machine…", false, #selector(addMachine))
-                if Stats.isHub { _ = add("Open the Hub's Dashboard", false, #selector(openDashboard)) }
+                if fleet == true, Stats.isReplica { submenu("Machines") { sub in fillMachines(sub) } }
+                if let replicaError {
+                    sub(menu, "This Mac Isn't a Replica Yet: \(replicaError.prefix(80))")
+                    _ = add("Try Again to Make This Mac a Replica", false, #selector(retryReplica))
+                }
+                if Stats.isHub { _ = add(fleet == true ? "Open the Dashboard" : "Open the Hub's Dashboard", false, #selector(openDashboard)) }
                 if Stats.bundled, !Stats.separate.filter({ $0 != "relay" }).isEmpty { _ = add("Let Tokiscope Run agent-stats…", false, #selector(takeOver)) }
                 if Stats.bundled, Stats.stopped { _ = add("Start agent-stats", false, #selector(startStats)) }
             }
@@ -1136,6 +1604,28 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         menu.addItem(.separator())
         let quit = menu.addItem(withTitle: "Quit Tokiscope", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
+        refreshMembers()                                  // for the next time the menu opens
+    }
+    // A line that only says something.
+    private func sub(_ menu: NSMenu, _ title: String) { menu.addItem(withTitle: title, action: nil, keyEquivalent: "").isEnabled = false }
+    // The fleet's machines: a dot (green: reported in the last minute or so), the name, what it is; Remove… in each.
+    private func fillMachines(_ menu: NSMenu) {
+        if members.isEmpty { sub(menu, "Looking…"); return }
+        for (i, m) in members.enumerated() {
+            let name = m["label"] as? String ?? m["machine"] as? String ?? "?", machine = m["machine"] as? String ?? name
+            let role = m["role"] as? String == "replica" ? "keeps the stats" : "reports"
+            let revoked = m["revoked"] as? Bool == true, online = m["online"] as? Bool == true
+            let item = menu.addItem(withTitle: name + (machine == node ? " (This Mac)" : ""), action: nil, keyEquivalent: "")
+            let color: NSColor = revoked ? .systemRed : online ? .systemGreen : .tertiaryLabelColor
+            item.image = NSImage(size: NSSize(width: 8, height: 8), flipped: false) { r in color.setFill(); NSBezierPath(ovalIn: r).fill(); return true }
+            let detail = NSMenu()
+            sub(detail, revoked ? "Removed" : "\(online ? "Online" : "Offline") · \(role)" + ((m["version"] as? String).map { " · agent-stats \($0)" } ?? ""))
+            if !revoked && machine != node {
+                let rm = detail.addItem(withTitle: "Remove…", action: #selector(removeMachine(_:)), keyEquivalent: "")
+                rm.target = self; rm.tag = i
+            }
+            item.submenu = detail
+        }
     }
 
     @objc private func toggleShown() { panel.isVisible ? panel.orderOut(nil) : panel.orderFrontRegardless() }
@@ -1249,13 +1739,22 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
             DispatchQueue.main.async {
                 self.busy = nil
                 self.hub.fetch()
-                switch r {
-                case .success(let note?): done?(note) ?? self.say("Done", note)
-                case .success(nil): break
-                case .failure(let e): self.say("That Didn't Work", (e as? Stats.Failure)?.message ?? e.localizedDescription, style: .warning)
+                self.soon {
+                    switch r {
+                    case .success(let note?): done?(note) ?? self.say("Done", note)
+                    case .success(nil): break
+                    case .failure(let e): self.say("That Didn't Work", (e as? Stats.Failure)?.message ?? e.localizedDescription, style: .warning)
+                    }
                 }
             }
         }
+    }
+    // Runs `f` from the run loop, not inside a block on the main queue: an alert it opens then lets the main queue go
+    // on (agent-stats' output as it comes, the hub's stream), which an alert opened inside such a block would hold up
+    // until it closes. Alerts that follow work done in the background go through here.
+    private func soon(_ f: @escaping () -> Void) {
+        RunLoop.main.perform(inModes: [.default]) { f() }
+        CFRunLoopWakeUp(CFRunLoopGetMain())
     }
     private func say(_ title: String, _ text: String, style: NSAlert.Style = .informational) {
         let alert = NSAlert()
@@ -1266,11 +1765,142 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         alert.runModal()
     }
 
+    // First launch (and Set Up This Mac… after): looks for a fleet on the tailnet and the local network, and offers to
+    // join it or to start one. Each Mac of a fleet keeps everyone's stats, so there is no main Mac to pick. With an
+    // agent-stats from before fleets it asks the old question: which Mac runs the hub.
     @objc private func setUp() {
+        background("Looking for Your Machines…") { [weak self] in
+            let fleet = Stats.hasFleet()
+            let found = fleet ? (try? Stats.json(["fleet", "discover", "--timeout", "3s"], timeout: 30)) as? [[String: Any]] ?? [] : []
+            DispatchQueue.main.async { self?.fleet = fleet; self?.soon { fleet ? self?.offerFleets(found) : self?.offerHub() } }
+            return nil
+        }
+    }
+
+    // The fleets agent-stats found, one entry each (the first machine of it that answered): a Mac's hub to ask.
+    private struct Found { let fleetId, name, node, url: String }
+    private func offerFleets(_ machines: [[String: Any]]) {
+        var fleets: [Found] = []
+        for m in machines where m["self"] as? Bool != true {
+            guard let s = m["agentStats"] as? [String: Any], ["hub", "replica"].contains(s["role"] as? String ?? ""),
+                  let id = s["fleetId"] as? String, let url = s["url"] as? String, !fleets.contains(where: { $0.fleetId == id }) else { continue }
+            fleets.append(Found(fleetId: id, name: s["name"] as? String ?? "your fleet", node: s["node"] as? String ?? m["name"] as? String ?? url, url: url))
+        }
         let alert = NSAlert()
         alert.messageText = "Set Up Tokiscope"
         alert.informativeText = """
-            Tokiscope shows the tokens your coding agents (Claude Code, Codex and others) use. One Mac keeps the stats:             it runs the hub. Every machine, that one included, counts its own agents and reports them to the hub.
+            Tokiscope shows the tokens your coding agents (Claude Code, Codex and others) use, on every machine you use them on. \
+            Each Mac of your fleet keeps everyone's stats, so none of them has to stay on.
+            """ + (fleets.isEmpty
+                ? "\n\nNo fleet answered on your tailnet or local network. Start one here, then add your other machines from the menu (Add Machine…)."
+                : fleets.count == 1 ? "\n\nFound “\(fleets[0].name)” on \(fleets[0].node)." : "\n\nFound these fleets:")
+        let pick = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26))
+        if fleets.count > 1 {
+            pick.addItems(withTitles: fleets.map { "\($0.name) (on \($0.node))" })
+            alert.accessoryView = pick
+        }
+        if !fleets.isEmpty { alert.addButton(withTitle: fleets.count == 1 ? "Join “\(fleets[0].name)”" : "Join") }
+        alert.addButton(withTitle: "Start a New Fleet")
+        alert.addButton(withTitle: "Join by Address…")
+        alert.addButton(withTitle: "Later")
+        NSApp.activate(ignoringOtherApps: true)
+        var r = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        if fleets.isEmpty { r += 1 }
+        switch r {
+        case 0: let f = fleets[max(0, pick.indexOfSelectedItem)]; requestJoin(f.url, f.name)
+        case 1:
+            background("Starting a Fleet…") {
+                try Stats.createFleet()
+                return "This Mac keeps your fleet's stats and counts its agents. To add another machine, choose Add Machine… in the menu."
+            }
+        case 2: joinByAddress()
+        default: break
+        }
+    }
+
+    // Asks a Mac of the fleet to let this one in (agent-stats fleet request), shows the digits both sides show while
+    // it waits, and once approved on any Mac of the fleet starts the hub and the reporter here: this Mac is a replica.
+    private func requestJoin(_ url: String, _ name: String) {
+        let digits = NSTextField(labelWithString: "· · · ·")
+        digits.font = .monospacedDigitSystemFont(ofSize: 34, weight: .semibold); digits.alignment = .center
+        let note = NSTextField(wrappingLabelWithString: "Asking \(url)…")
+        note.textColor = .secondaryLabelColor; note.font = .systemFont(ofSize: NSFont.smallSystemFontSize); note.alignment = .center
+        let box = NSStackView(views: [digits, note])
+        box.orientation = .vertical; box.spacing = 6; box.frame = NSRect(x: 0, y: 0, width: 320, height: 76)
+        digits.widthAnchor.constraint(equalToConstant: 320).isActive = true; note.preferredMaxLayoutWidth = 320
+        let alert = NSAlert()
+        alert.messageText = "Approve This Mac on Another Mac"
+        alert.informativeText = "On any Mac of “\(name)”, Tokiscope asks whether \(Stats.label) may join. Check that it shows the same digits, then approve it there."
+        alert.accessoryView = box
+        alert.addButton(withTitle: "Cancel")
+        Stats.prepareJoin()
+        var outcome: String?, said = ""
+        busy = "Asking to Join “\(name)”…"
+        let p = Stats.stream(["fleet", "request", url, "--label", Stats.label, "--json"], line: { e in
+            switch e["state"] as? String {
+            case "pending":
+                digits.stringValue = App.spaced(e["digits"] as? String ?? "")
+                note.stringValue = "Waiting for approval. The request lasts 10 minutes."
+            case let s? where ["approved", "denied", "expired"].contains(s): outcome = s; NSApp.stopModal()
+            default: break
+            }
+        }, done: { status, err in
+            guard outcome == nil else { return }
+            outcome = "failed"; said = err.isEmpty ? "agent-stats fleet request stopped (status \(status))." : err
+            NSApp.stopModal()
+        })
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+        busy = nil
+        switch outcome {
+        case nil: p.terminate()                           // cancelled
+        case "approved":
+            background("Starting agent-stats…") {
+                try Stats.startReplica()
+                return "This Mac is part of “\(name)”: it keeps the fleet's stats and counts its agents."
+            }
+        case "denied": say("Not Approved", "A Mac of “\(name)” turned the request down.")
+        case "expired": say("The Request Expired", "Nobody approved it within 10 minutes. Ask again, and approve it on a Mac of the fleet while it waits.")
+        default: say("That Didn't Work", said, style: .warning)
+        }
+    }
+
+    // A Mac of the fleet that discovery didn't find (another network, say): its address, or a line its Add Machine…
+    // showed. Before fleets, only the line.
+    private func joinByAddress() {
+        let alert = NSAlert()
+        alert.messageText = fleet == true ? "Join a Fleet" : "Join Another Mac"
+        alert.informativeText = fleet == true
+            ? "The address of a Mac in the fleet, such as http://mac-mini:7777 (its Tailscale or local name, port 7777), or a line its Add Machine… showed."
+            : "On the main Mac, choose Add Machine… in Tokiscope's menu, then paste the line it shows here."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 400, height: 24))
+        field.placeholderString = fleet == true ? "http://mac-mini:7777" : "agent-stats join http://… --code …"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Join")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines), fleet = self.fleet == true
+        if text.contains("--code") || !fleet {
+            return background("Joining…") {
+                try Stats.joinWithLine(text, fleet: fleet)
+                return fleet && Stats.isReplica ? "This Mac is part of the fleet: it keeps the fleet's stats and counts its agents."
+                    : "This Mac counts its agents and reports them to the hub."
+            }
+        }
+        var url = text.contains("://") ? text : "http://" + text
+        if var c = URLComponents(string: url), c.port == nil { c.port = 7777; url = c.string ?? url }
+        requestJoin(url, URL(string: url)?.host ?? url)
+    }
+
+    // Before fleets: one Mac runs the hub, the others join it.
+    private func offerHub() {
+        let alert = NSAlert()
+        alert.messageText = "Set Up Tokiscope"
+        alert.informativeText = """
+            Tokiscope shows the tokens your coding agents (Claude Code, Codex and others) use. One Mac keeps the stats: \
+            it runs the hub. Every machine, that one included, counts its own agents and reports them to the hub.
 
             Use another machine too? Set up the main one first, then add the others from its menu (Add Machine…).
             """
@@ -1284,48 +1914,165 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
                 try Stats.becomeHub()
                 return "This Mac runs the hub and counts its agents. To add another machine, choose Add Machine… in the menu."
             }
-        case .alertSecondButtonReturn: joinHub()
+        case .alertSecondButtonReturn: joinByAddress()
         default: break
         }
     }
 
-    private func joinHub() {
-        let alert = NSAlert()
-        alert.messageText = "Join Another Mac"
-        alert.informativeText = "On the main Mac, choose Add Machine… in Tokiscope's menu, then paste the line it shows here."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 400, height: 24))
-        field.placeholderString = "agent-stats join http://… --code …"
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Join")
-        alert.addButton(withTitle: "Cancel")
-        NSApp.activate(ignoringOtherApps: true)
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let line = field.stringValue
-        background("Joining the Hub…") {
-            try Stats.join(line)
-            return "This Mac counts its agents and reports them to the hub."
+    // An update brought fleets: this Mac becomes a replica (Stats.becomeReplica). Quietly at launch; what went wrong
+    // shows in the menu, with Try Again.
+    private func becomeReplica(quietly: Bool) {
+        guard Stats.wantsReplica else { replicaError = nil; return }
+        busy = "Making This Mac a Replica…"
+        DispatchQueue.global().async {
+            let r = Result { try Stats.becomeReplica() }
+            DispatchQueue.main.async {
+                self.busy = nil
+                self.hub.fetch()
+                switch r {
+                case .success: self.replicaError = nil; self.refreshMembers()
+                case .failure(let e):
+                    let msg = (e as? Stats.Failure)?.message ?? e.localizedDescription
+                    self.replicaError = msg
+                    if !quietly { self.soon { self.say("That Didn't Work", msg, style: .warning) } }
+                }
+            }
         }
     }
+    @objc private func retryReplica() { becomeReplica(quietly: false) }
 
     @objc private func addMachine() {
+        // Before fleets machines are added on the main Mac only, with a line to paste.
+        guard fleet == true, Stats.isHub else { return addMachineByLine() }
+        if Stats.hubOnLoopback, !confirmOpenHub() { return }
+        showAddWindow()
+    }
+    private func showAddWindow() {
+        if addWindow == nil {
+            let w = AddMachineWindow()
+            w.onAdded = { [weak self] in self?.refreshMembers(); self?.hub.fetch() }
+            w.openHub = { [weak self] then in
+                guard let self, self.confirmOpenHub() else { return }
+                self.background("Opening the Hub to Your Network…", { try Stats.openHub(); return "" }) { _ in then() }
+            }
+            addWindow = w
+        }
+        addWindow?.show()
+    }
+    // Only this Mac reaches its hub so far: ask before other machines can (each still needs a code to join).
+    private func confirmOpenHub() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Open the Hub to Your Network?"
+        alert.informativeText = """
+            Until now only this Mac reaches the hub. Other machines will reach it on port \(Stats.hubPort), over \
+            Tailscale or your local network. Each needs a one-time code to join; without one, nobody can report \
+            or read anything. macOS may ask whether agent-stats may accept incoming connections: allow it.
+            """
+        alert.addButton(withTitle: "Open It")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+    private func addMachineByLine() {
         guard Stats.isHub else {
             let host = hub.route.flatMap { URL(string: $0.url)?.host }
             return say("Add Machine", "Machines are added on the main Mac, the one that runs the hub\(host.map { " (\($0))" } ?? ""): choose Add Machine… in Tokiscope's menu there.")
         }
-        let open = ((try? String(contentsOf: Stats.hubToml, encoding: .utf8)) ?? "").contains("listen = \"127.0.0.1:")
-        if open {
-            let alert = NSAlert()
-            alert.messageText = "Open the Hub to Your Network?"
-            alert.informativeText = """
-                Until now only this Mac reaches the hub. Other machines will reach it on port \(Stats.hubPort), over                 Tailscale or your local network. Each needs a one-time code to join; without one, nobody can report                 or read anything. macOS may ask whether agent-stats may accept incoming connections: allow it.
-                """
-            alert.addButton(withTitle: "Open It")
-            alert.addButton(withTitle: "Cancel")
-            NSApp.activate(ignoringOtherApps: true)
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        }
+        if Stats.hubOnLoopback, !confirmOpenHub() { return }
         background("Making a Code…", { try Stats.pair() }) { [weak self] line in self?.showCode(line) }
+    }
+
+    // ---- The fleet ------------------------------------------------------------------------------------------------
+    // "4821" as "48 21", the way the digits are read out.
+    static func spaced(_ d: String) -> String { d.count == 4 ? "\(d.prefix(2)) \(d.suffix(2))" : d }
+
+    // The machines and this Mac's name, for the menu (in the background; the menu shows what came last).
+    private var refreshing = false
+    private func refreshMembers() {
+        guard fleet == true, Stats.isReplica, !refreshing else { return }
+        refreshing = true
+        DispatchQueue.global().async {
+            let list = (try? Stats.json(["fleet", "list"], timeout: 15)) as? [[String: Any]]
+            let st = self.node == nil ? (try? Stats.json(["fleet", "status"], timeout: 15)) as? [String: Any] : nil
+            DispatchQueue.main.async {
+                self.refreshing = false
+                if let list { self.members = list }
+                if let n = st?["node"] as? String { self.node = n }
+            }
+        }
+    }
+    @objc private func removeMachine(_ sender: NSMenuItem) {
+        guard sender.tag < members.count, let machine = members[sender.tag]["machine"] as? String else { return }
+        let name = members[sender.tag]["label"] as? String ?? machine
+        let alert = NSAlert()
+        alert.messageText = "Remove \(name) From the Fleet?"
+        alert.informativeText = "Its token stops working on every Mac of the fleet, so it can't report or read anything any more. Its stats so far stay. To add it again later, use Add Machine… in the menu."
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons[0].hasDestructiveAction = true
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        background("Removing \(name)…") { [weak self] in
+            try Stats.exec(["fleet", "remove", machine], timeout: 30)
+            DispatchQueue.main.async { self?.refreshMembers() }
+            return nil
+        }
+    }
+
+    // Join requests: from the hub's stream, or from agent-stats (pollRequests). Each new one is asked about once; all of
+    // them stay in the menu until approved or turned down somewhere in the fleet.
+    private func gotRequests(_ list: [[String: Any]]) {
+        guard Stats.isReplica else { return }
+        requests = list
+        let ids = Set(list.compactMap { $0["id"] as? String })
+        // Settled elsewhere (approved on another Mac, expired): the question goes away.
+        if let a = asking, !ids.contains(a), let w = askAlert?.window, NSApp.modalWindow === w { NSApp.stopModal(withCode: .cancel) }
+        guard asking == nil, let r = list.first(where: { ($0["id"] as? String).map { !asked.contains($0) } ?? false }),
+              let id = r["id"] as? String else { return }
+        asking = id                                       // until it is asked (soon) and answered
+        soon { self.ask(r) }
+    }
+    private func pollRequests() {
+        guard fleet == true, Stats.isReplica, !hub.requestsLive, !polling else { return }
+        polling = true
+        DispatchQueue.global().async {
+            let list = (try? Stats.json(["fleet", "requests"], timeout: 15)) as? [[String: Any]]
+            DispatchQueue.main.async { self.polling = false; if let list { self.gotRequests(list) } }
+        }
+    }
+    @objc private func askRequest(_ sender: NSMenuItem) {
+        guard sender.tag < requests.count, asking == nil, let id = requests[sender.tag]["id"] as? String else { return }
+        asking = id; ask(requests[sender.tag])
+    }
+    private func ask(_ r: [String: Any]) {
+        guard let id = r["id"] as? String, requests.contains(where: { $0["id"] as? String == id }) else { asking = nil; return }
+        let who = r["label"] as? String ?? r["machine"] as? String ?? "A machine"
+        asked.insert(id); asking = id
+        let alert = NSAlert()
+        alert.messageText = "\(who) Asks to Join Your Fleet"
+        alert.informativeText = """
+            Check that \(who) shows these digits: \(App.spaced(r["digits"] as? String ?? "")).
+
+            Approve only a machine you set up yourself: it will report its agents and read every machine's stats.
+            """
+        alert.addButton(withTitle: "Approve")
+        alert.addButton(withTitle: "Turn Down")
+        alert.addButton(withTitle: "Later")
+        askAlert = alert
+        NSApp.activate(ignoringOtherApps: true)
+        let res = alert.runModal()
+        asking = nil; askAlert = nil
+        let next = { [weak self] in guard let self else { return }; self.gotRequests(self.requests) }
+        guard res != .cancel else { return next() }       // settled elsewhere meanwhile
+        switch res {
+        case .alertFirstButtonReturn:
+            background("Approving \(who)…", { try Stats.approve(id); return "" }) { _ in
+                self.requests.removeAll { $0["id"] as? String == id }; self.refreshMembers(); next()
+            }
+        case .alertSecondButtonReturn:
+            background("Turning Down \(who)…", { try Stats.deny(id); return "" }) { _ in self.requests.removeAll { $0["id"] as? String == id }; next() }
+        default: next()
+        }
     }
 
     private func showCode(_ line: String) {

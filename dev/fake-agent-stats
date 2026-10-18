@@ -1,0 +1,73 @@
+#!/bin/sh
+# A stand-in for agent-stats that answers the fleet commands Tokiscope runs with JSON shaped like
+# agent-stats' docs/FLEET.md ("CLI contracts"), to try the app's fleet UI without a fleet:
+#   ./build.sh with AGENT_STATS_BIN=dev/fake-agent-stats, or copy it over Contents/Helpers/agent-stats of a test build.
+# Targets for `fleet add --ssh`: one containing "needs-key", "taken" (until --replace), "noroute", "unreachable"
+# or "slow" fails or waits that way; anything else installs. `fleet request <url>` is denied when the URL contains
+# "deny", expires with "expire", else approved after FAKE_APPROVE_AFTER seconds (default 4).
+# FAKE_LOG, when set, gets one line per command run.
+[ -n "$FAKE_LOG" ] && echo "$*" >> "$FAKE_LOG"
+cmd="$1 $2"
+case "$cmd" in
+  "version "|"version"*) echo "agent-stats 0.6.0 (protocol 2)" ;;
+  "fleet status")
+    echo '{"fleetId":"f1e2","name":"home","node":"mac-mini","replica":true,"publisher":"mac-mini","members":[{"node":"mac-mini","routes":["http://mac-mini.tail1234.ts.net:7777"],"alwaysOn":true,"version":"0.6.0","lastSync":null,"reachable":true}]}' ;;
+  "fleet create"|"fleet replica") echo '{"fleetId":"f1e2","node":"mac-mini","listen":"0.0.0.0:7777","startHub":true}' ;;
+  "fleet requests")
+    echo '[{"id":"r1","machine":"macbook-air","label":"MacBook Air","platform":"darwin","digits":"4821","at":1792300000000}]' ;;
+  "fleet approve"|"fleet deny") echo "ok" ;;
+  "fleet request")
+    echo '{"state":"pending","id":"r1","digits":"4821","expires":1792300600000}'
+    case "$3" in
+      *deny*) sleep 3; echo '{"state":"denied"}' ;;
+      *expire*) sleep 3; echo '{"state":"expired"}' ;;
+      *) sleep "${FAKE_APPROVE_AFTER:-4}"; echo '{"state":"approved","fleetId":"f1e2","name":"home"}' ;;
+    esac ;;
+  "fleet discover")
+    sleep 1
+    cat <<'EOF'
+[{"name":"mac-mini","host":"mac-mini.tail1234.ts.net","addresses":["100.64.0.2"],"os":"macos","sources":["tailscale","bonjour"],"online":true,"self":true,"member":true,"agentStats":{"url":"http://mac-mini.tail1234.ts.net:7777","role":"replica","fleetId":"f1e2","name":"home","node":"mac-mini","version":"0.6.0"}},
+ {"name":"macbook-air","host":"macbook-air.tail1234.ts.net","addresses":["100.64.0.3"],"os":"macos","sources":["tailscale"],"online":true,"self":false,"member":true,"agentStats":{"url":"http://macbook-air.tail1234.ts.net:7777","role":"replica","fleetId":"f1e2","name":"home","node":"macbook-air","version":"0.6.0"}},
+ {"name":"cachyos","host":"cachyos.tail1234.ts.net","addresses":["100.64.0.5"],"os":"linux","sources":["tailscale"],"online":true,"self":false,"member":false,"agentStats":null},
+ {"name":"studio","host":"studio.local","addresses":["192.168.1.30"],"os":"macos","sources":["bonjour"],"online":true,"self":false,"member":false,"agentStats":null},
+ {"name":"nas","host":"nas.tail1234.ts.net","addresses":["100.64.0.9"],"os":"linux","sources":["tailscale"],"online":false,"self":false,"member":false,"agentStats":null},
+ {"name":"gaming-pc","host":"gaming-pc.tail1234.ts.net","addresses":["100.64.0.7"],"os":"windows","sources":["tailscale"],"online":true,"self":false,"member":false,"agentStats":null}]
+EOF
+    ;;
+  "fleet list")
+    echo '[{"machine":"mac-mini","label":"Mac mini","role":"replica","online":true,"lastReport":1792300000000,"version":"0.6.0","platform":"darwin","revoked":false,"routes":["http://mac-mini.tail1234.ts.net:7777"]},
+{"machine":"macbook-air","label":"MacBook Air","role":"replica","online":false,"lastReport":1792290000000,"version":"0.6.0","platform":"darwin","revoked":false,"routes":["http://macbook-air.tail1234.ts.net:7777"]},
+{"machine":"cachyos","label":"cachyos","role":"leaf","online":true,"lastReport":1792300000000,"version":"0.6.0","platform":"linux","revoked":false,"routes":[]}]' ;;
+  "fleet remove") echo "removed $3" ;;
+  "fleet invite")
+    echo '{"line":"curl -fsSL https://raw.githubusercontent.com/kcazin/agent-stats/main/install.sh | sh -s -- --join http://mac-mini.tail1234.ts.net:7777 --code K7Q2-9XMD","url":"http://mac-mini.tail1234.ts.net:7777","code":"K7Q2-9XMD","expires":1792300600000}' ;;
+  "fleet add")
+    target="$4"; replace=no
+    for a in "$@"; do [ "$a" = "--replace" ] && replace=yes; done
+    say() { echo "$1"; sleep "${FAKE_STEP:-0.8}"; }
+    say '{"step":"connect","state":"running","detail":"ssh '"$target"'"}'
+    case "$target" in
+      *needs-key*) echo '{"step":"connect","state":"error","error":"needs-key","message":"'"$target"' asked for a password: this Mac'"'"'s SSH key is not authorized there.","hint":"ssh-copy-id '"$target"'"}'; exit 1 ;;
+      *unreachable*) echo '{"step":"connect","state":"error","error":"unreachable","message":"ssh: connect to host '"$target"' port 22: Operation timed out","hint":null}'; exit 1 ;;
+    esac
+    say '{"step":"connect","state":"ok","detail":"Linux x86_64 · systemd · no agent-stats yet"}'
+    case "$target" in
+      *taken*) [ $replace = no ] && { echo '{"step":"connect","state":"error","error":"taken","message":"A machine named '"$target"' is already in the fleet.","hint":"agent-stats fleet add --ssh '"$target"' --replace"}'; exit 1; } ;;
+    esac
+    say '{"step":"route","state":"running","detail":null}'
+    case "$target" in
+      *noroute*) echo '{"step":"route","state":"error","error":"no-route-back","message":"From '"$target"', none of this Mac'"'"'s addresses answered.","hint":"tried http://127.0.0.1:7777"}'; exit 1 ;;
+    esac
+    say '{"step":"route","state":"ok","detail":"http://mac-mini.tail1234.ts.net:7777 answered from '"$target"'"}'
+    say '{"step":"install","state":"running","detail":"downloading agent-stats 0.6.0"}'
+    say '{"step":"install","state":"ok","detail":"agent-stats 0.6.0, SHA256 verified"}'
+    say '{"step":"join","state":"running"}'
+    say '{"step":"join","state":"ok","detail":"systemd user service, runs without login"}'
+    say '{"step":"report","state":"running","detail":"usually under 20 s"}'
+    case "$target" in *slow*) sleep 30 ;; esac
+    say '{"step":"report","state":"ok","detail":"first report received"}'
+    echo '{"step":"done","state":"ok","machine":"'"$target"'","label":"'"$target"'"}' ;;
+  "hub pair") echo "agent-stats join http://127.0.0.1:7777 --code ABCD-EFGH" ;;
+  "join "*) echo "Joined" ;;
+  *) echo "unknown command $1" >&2; exit 2 ;;
+esac

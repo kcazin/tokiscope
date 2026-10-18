@@ -23,22 +23,33 @@ zoom, click-through, background, and whether it sits above windows or on the des
 ## Your machines
 
 Tokiscope carries [agent-stats](https://github.com/kcazin/agent-stats), which counts the tokens your coding agents
-(Claude Code, Codex and others) use, and runs it as the app's background items. One Mac runs the **hub**, which keeps
-every machine's stats; every machine, that one included, runs a **reporter** that counts its own agents and sends
-them to the hub. The widget shows the hub's view.
+(Claude Code, Codex and others) use, and runs it as the app's background items. Your machines form a **fleet**: every
+Mac with Tokiscope is a **replica**, which runs the hub, keeps every machine's stats and syncs them with the other
+Macs, so the widget shows everything even while the other Macs sleep. Machines without Tokiscope (a Linux box, say)
+only run the reporter and send to whichever Mac answers. No Mac is the main one.
 
-- **First launch** asks which part this Mac plays: *This Is the Main Mac* starts the hub and a reporter;
-  *Join Another Mac…* takes the line the main Mac gives. The menu has *Set Up This Mac…* after.
-- **Add Machine…** on the main Mac makes a one-time code (10 minutes). The first time, it opens the hub to the
-  network (port 7777, over Tailscale or the local network); each machine still needs its own code to report or read.
-  On another Mac, paste the line into Tokiscope's *Join Another Mac…*. On Linux, or a Mac without Tokiscope, the
-  terminal line installs agent-stats and joins (`curl … install.sh | sh && ~/.local/bin/agent-stats join … --code …`).
+- **First launch** looks for a fleet on your tailnet and local network: *Join “home”* asks a Mac of it to let this
+  one in. Both Macs show the same four digits; approve on any Mac of the fleet. *Start a New Fleet* makes this Mac
+  the first one. *Join by Address…* takes a Mac's address (or a line an older Add Machine… showed). The menu has
+  *Set Up This Mac…* after.
+- **Add Machine…** (on any Mac of the fleet) lists what it finds on the tailnet and the network. *Install* puts
+  agent-stats on a Linux box or a Mac without Tokiscope over SSH, with your keys and `~/.ssh/config`, and shows each
+  step; if SSH would ask for a password, it opens Terminal with `ssh-copy-id` instead. Any other SSH target goes in
+  the field below. For a machine this Mac can't reach by SSH, *Make a Line* gives a one-time line to paste there.
+  The first time, it opens the hub to the network (port 7777, over Tailscale or the local network); every machine
+  still needs to be approved or given a code to report or read.
+- When a Mac asks to join, every Mac of the fleet asks you to approve it (also in the menu until someone does).
+  *Machines* in the menu lists the fleet, who is online, and removes a machine.
+- After an update that brings fleets, a Mac set up before (the old main Mac, or one that joined it) becomes a replica
+  on its own; if that fails, the menu says why and offers to try again, and everything keeps running as it was.
 - An agent-stats **installed on its own** (install.sh) keeps running as it is; the widget reads it, and *Let Tokiscope
   Run agent-stats…* moves its reporter, hub and updater to the app's background items (config and stats stay).
 - The widget reads the hub on this Mac first, then the hubs this Mac joined, with the read-only token each gave it.
   A **relay** (*Load From > Other Stats Relay…*) is read when no hub answers.
 
-`Tokiscope --stats hub | join "<line>" | pair | take-over | start | stop | status` does the same from a script.
+`Tokiscope --stats create | replica | hub | join "<line>" | pair | take-over | start | stop | status` does the same
+from a script; `--stats add-machine [<ssh target>]` opens the Add Machine window, `--stats request <url>` asks a
+fleet to let this Mac in. `dev/fake-agent-stats` stands in for agent-stats' fleet commands, to try that UI.
 
 ## Build
 

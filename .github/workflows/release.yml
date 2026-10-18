@@ -1,6 +1,7 @@
 name: release
 # A v* tag: the DMG, signed with the Developer ID and notarized, and the update feed, published as a GitHub release.
-# Installed apps read releases/latest/download/appcast.xml, so publishing the release is what ships the update.
+# Installed apps read releases/latest/download/appcast.xml, so publishing the release is what ships the update (a
+# pre-release, v*-*, ships to nobody: install it by hand).
 # Secrets: DEVELOPER_ID_P12 (base64 of the certificate and its key, .p12) and DEVELOPER_ID_P12_PASSWORD; ASC_KEY_ID,
 # ASC_ISSUER_ID and ASC_KEY_CONTENT (base64 of the .p8), an App Store Connect API key for notarization;
 # SPARKLE_PRIVATE_KEY, the update signing key (generate_keys -x).
@@ -48,7 +49,12 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" build/dist/* --title "Tokiscope ${GITHUB_REF_NAME#v}" --generate-notes
+        # A tag like v0.2.0-rc.1 is a pre-release: never "latest", so no installed app's feed offers it.
+        run: |
+          case "$GITHUB_REF_NAME" in
+            *-*) gh release create "$GITHUB_REF_NAME" build/dist/* --title "Tokiscope ${GITHUB_REF_NAME#v}" --generate-notes --prerelease --latest=false ;;
+            *) gh release create "$GITHUB_REF_NAME" build/dist/* --title "Tokiscope ${GITHUB_REF_NAME#v}" --generate-notes ;;
+          esac
       - name: Clean up
         if: always()
         run: rm -rf "$RUNNER_TEMP/keys"; security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
