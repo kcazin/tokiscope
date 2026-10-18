@@ -1064,7 +1064,7 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
                 views.append(Self.text("Only this Mac reaches its hub so far. Open it to your network (port \(Stats.hubPort), over Tailscale or your local network), then try again.", small: true))
                 buttons = [ActionButton("Open the Hub to the Network", primary: true) { [weak self] in self?.openHub? { self?.add(target) } }, retry]
             } else { buttons = [retry] }
-        case "unsupported", "stopped": buttons = []
+        case "unsupported", "stopped", "other-fleet": buttons = []   // trying again won't change it
         default: buttons = [retry]
         }
         if !buttons.isEmpty { views.append(row(buttons + [NSView()])) }
