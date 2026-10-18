@@ -1,6 +1,6 @@
 # The agent-stats release Tokiscope ships as Contents/Helpers/agent-stats: its version, and the SHA256 of each Mac
 # archive (from the release's SHA256SUMS). build.sh downloads both, checks them against these and merges them into
 # one universal binary. A pull request bumps this when agent-stats releases.
-version=0.5.0
-aarch64-apple-darwin=304f65d3f169d2523241156b29fb351a4a784ffc856a496708c252158ab0b0ae
-x86_64-apple-darwin=1bcfb468e9b3cffdc8349184462c171537671e18bf5bdf9f31a72b3a069f7b2a
+version=0.6.0-rc.1
+aarch64-apple-darwin=19dcc1ba3c6217a65b4509570f74edba292df5e496dad5e111dc94079674d6a2
+x86_64-apple-darwin=f669ea9541c0e3af31da875f699de2c12f0ddd9234bd2c6896652cf19523b17a
