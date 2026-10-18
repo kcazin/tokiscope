@@ -3,17 +3,17 @@
 // arrive: every publish's new tokens per project become units (crates, bricks, grains) handed out over the time
 // until the next one. A project's figure is its tokens today less the units still on their way to it.
 
-// Where the stats come from. On the web, the public relay (?relay=<url> picks another): its projects are the hub's
-// public ones, and every other repository counts as `other`. In the desktop app, the hub itself whenever the app can
-// reach it over the tailnet: the app hands over its /api/state and /api/repos (window.hubFeed), and each repository
-// shows under its own name, those of a configured project under the project's.
-const RELAY = (new URLSearchParams(location.search).get('relay') || 'https://relay-production-908a.up.railway.app').replace(/\/(stats)?\/?$/, '');
-// The projects come from the feed, and the machines are rebuilt to make room when they change. These are the ones
-// known until it answers. A new project gets its key as its name and a spare colour unless the feed says otherwise.
-export const PROJECTS = ['neon', 'chum', 'contenthall', 'other'];
-export const NAMES = { neon: 'Neon Overrun', chum: 'Chum', contenthall: 'Content Hall', other: 'Side projects' };
-export const RGB = { neon: [226, 80, 43], chum: [240, 160, 48], contenthall: [57, 135, 229], other: [196, 188, 174] };
-export const SHORT = { neon: 'Neon', chum: 'Chum', contenthall: 'Content', other: 'Side' };
+// Where the stats come from. In the desktop app, the hub (window.hubFeed): the app hands over its /api/state and
+// /api/repos, and each repository shows under its own name, those of a configured project under the project's. A
+// relay too when one is given (?relay=<url>): its projects are the hub's public ones, and every other repository
+// counts as `other`. On the web, only the relay.
+const RELAY = (new URLSearchParams(location.search).get('relay') || '').replace(/\/(stats)?\/?$/, '');
+// The projects come from the feed, and the machines are rebuilt to make room when they change. Until it answers,
+// just `other`. A new project gets its key as its name and a spare colour unless the feed says otherwise.
+export const PROJECTS = ['other'];
+export const NAMES = { other: 'Other' };
+export const RGB = { other: [196, 188, 174] };
+export const SHORT = { other: 'Other' };
 const SPARE = [[86, 178, 98], [160, 110, 226], [40, 180, 168], [226, 96, 150], [206, 196, 72], [110, 146, 255], [214, 128, 80], [150, 200, 230]];
 export const shade = (p, k) => `rgb(${(RGB[p] || RGB.other).map(v => Math.min(255, Math.round(k > 1 ? v + (255 - v) * (k - 1) : v * k)))})`;
 export const SHADES = [1, 0.84, 0.7];
@@ -168,7 +168,7 @@ setInterval(() => { if (feed.live && seen) rated(Date.now()); }, 1000);
 // The relay, polled when nothing is pushed: no hub view from the app in the last 45 s, no relay stream in the last 20 s.
 async function poll() {
   let next = 5000;
-  if (Date.now() - hubAt > 45000 && Date.now() - relayAt > 20000) try {
+  if (RELAY && RELAY !== 'demo' && Date.now() - hubAt > 45000 && Date.now() - relayAt > 20000) try {
     const res = await fetch(RELAY + '/stats', { cache: 'no-store' });
     if (res.status === 503) throw 0;                       // nothing published yet
     const d = await res.json();

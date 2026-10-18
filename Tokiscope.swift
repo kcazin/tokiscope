@@ -1,15 +1,17 @@
 // Tokiscope: your agents at work (the machines carrying today's tokens) and the projects they go to, in a small window
 // that floats over the desktop. It shows one of the layouts in lab/ (?only=<layout>), from the copy bundled in the app
 // (BundlePages) or a local copy. A menu bar item picks the layout and its zoom, and sets the rest:
-// click-through, move and resize, background, above windows or on the desktop. The stats come from the hub when it
-// can be reached over the tailnet, so every repository shows by name (HubFeed); otherwise from the public relay
-// (RelayFeed). Both are streamed, so a change shows within a second or two, and polled when there is no stream.
+// click-through, move and resize, background, above windows or on the desktop. The stats come from the hub, which
+// the app runs on the main Mac (Stats), so every repository shows by name (HubFeed); or from a relay, when one is set
+// and the hub can't be reached (RelayFeed). Both are streamed, so a change shows within a second or two, and polled
+// when there is no stream.
 // In bubble mode it is a small floating bubble instead (lab/bubble.html): hover it for a card with more, click it
 // for the layout, drag it anywhere. The window stays at the full size the page asks for (it never resizes on hover, which
 // would make the web view flash) and lets the pointer through except over the bubble and whatever is showing.
 
 import Cocoa
 import ServiceManagement
+import SystemConfiguration
 import WebKit
 
 // Each layout's page and its size in CSS px for four projects (a lab page says its real size once it knows the projects).
@@ -35,7 +37,6 @@ private let layouts: [Layout?] = [
 private let sites = [("Built In", BundlePages.origin), ("Local Copy (localhost:8765)", "http://localhost:8765")]
 private let zooms: [(String, CGFloat)] = [("Small", 1), ("Medium", 1.5), ("Large", 2)]
 private let pad: CGFloat = 10
-private let defaultRelay = "https://relay-production-908a.up.railway.app"
 private let bubbles = [("orb", "Agents Orb"), ("ring", "Today Ring"), ("globe", "Squares Globe"), ("pulse", "Token Rate"),
                        ("tach", "Tachometer"), ("odo", "Odometer"), ("quake", "Seismograph"), ("rain", "Token Rain"), ("ecg", "Heartbeat")]
 // The tokens the rates, meters and traces count (lab/flow.js ?kinds=): any of these, all by default.
@@ -119,10 +120,11 @@ final class EventStream: NSObject, URLSessionDataDelegate {
     // Open and sending: the servers send a comment at least every 15 s.
     var healthy: Bool { opened && Date().timeIntervalSince(lastData) < 40 }
 
-    init(_ url: URL) {
+    init(_ url: URL, token: String? = nil) {
         super.init()
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 45)
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: .main)
         session?.dataTask(with: req).resume()
     }
@@ -160,42 +162,54 @@ final class EventStream: NSObject, URLSessionDataDelegate {
 }
 
 // ---- The hub ------------------------------------------------------------------------------------------------------
-// The overlay is private, so it can show every repository by name, which the public relay never sees: it follows the
-// hub's /api/stream over the tailnet (`live` within a second of a change, `repos` when they change) and hands them to
-// the page (window.hubFeed). It finds the hub the way this Mac's reporter does: agent-stats' config.toml, or the old
-// reporter's launchd job (HUB_URL). Without the stream (an older hub: 404, or it keeps failing) it reads /api/state
-// and /api/repos every 15 s, and tries the stream again every five minutes. When no route answers, the page goes back
-// to the relay on its own.
+// The overlay is private, so it can show every repository by name, which a public relay never sees: it follows the
+// hub's /api/stream (`live` within a second of a change, `repos` when they change) and hands them to the page
+// (window.hubFeed). The hub on this Mac first, which trusts this Mac; then the hubs this Mac's reporter joined, from
+// agent-stats' config.toml, with the read-only token each gave it (`Authorization: Bearer`; without one, a hub answers
+// only machines it trusts, such as its tailnet), or the old reporter's launchd job (HUB_URL). Without the stream (an
+// older hub: 404, or it keeps failing) it reads /api/state and /api/repos every 15 s, and tries the stream again every
+// five minutes. When no route answers, the page goes back to the relay on its own, if there is one.
 final class HubFeed {
-    private(set) var route: String?                       // the one that answered last
+    struct Route: Equatable { let url: String; let token: String? }
+    private(set) var route: Route?                        // the one that answered last
     private(set) var latest: String?                      // the arguments for window.hubFeed, as JS
     var onUpdate: ((String) -> Void)?
     private var timer: Timer?, busy = false
     private var stream: EventStream?, state: String?, repos: String?, fails = 0, retryAt = Date.distantPast
     var live: Bool { stream?.healthy == true }
 
-    static func routes() -> [String] {
-        var found: [String] = []
+    static func routes() -> [Route] {
+        var found: [Route] = Stats.isHub ? [Route(url: Stats.localHub, token: nil)] : []
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let base = ProcessInfo.processInfo.environment["AGENT_STATS_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
-            ?? home.appendingPathComponent(".config/agent-stats")
-        if let toml = try? String(contentsOf: base.appendingPathComponent("config.toml"), encoding: .utf8) {
-            for line in toml.split(separator: "\n") where line.trimmingCharacters(in: .whitespaces).hasPrefix("routes") {
-                for part in line.split(separator: "\"").enumerated() where part.offset % 2 == 1 { found.append(String(part.element)) }
+        // Each [[hub]] entry: its routes (a list, maybe over several lines) and view_token_file.
+        if let toml = try? String(contentsOf: Stats.configToml, encoding: .utf8) {
+            var hub = false, inRoutes = false, routes: [String] = [], token: String?
+            let flush = { found += routes.map { Route(url: $0, token: token) }; routes = []; token = nil }
+            for raw in toml.split(separator: "\n") {
+                let line = raw.trimmingCharacters(in: .whitespaces)
+                if inRoutes { routes += Stats.quoted(line); inRoutes = !line.contains("]"); continue }
+                if line.hasPrefix("[") { flush(); hub = line == "[[hub]]"; continue }
+                guard hub else { continue }
+                if line.hasPrefix("routes") { routes += Stats.quoted(line); inRoutes = !line.contains("]") }
+                if line.hasPrefix("view_token_file"), let f = Stats.quoted(line).first {
+                    let file = f.hasPrefix("/") ? URL(fileURLWithPath: f) : Stats.dir.appendingPathComponent(f)
+                    token = (try? String(contentsOf: file, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
             }
+            flush()
         }
         let agents = home.appendingPathComponent("Library/LaunchAgents")
         for name in (try? FileManager.default.contentsOfDirectory(atPath: agents.path)) ?? [] where name.contains("agent-stats") {
             let plist = NSDictionary(contentsOf: agents.appendingPathComponent(name))
-            if let url = (plist?["EnvironmentVariables"] as? [String: Any])?["HUB_URL"] as? String { found.append(url) }
+            if let url = (plist?["EnvironmentVariables"] as? [String: Any])?["HUB_URL"] as? String { found.append(Route(url: url, token: nil)) }
         }
         var seen = Set<String>()
-        return found.map { r -> String in
-            var u = r.trimmingCharacters(in: .whitespaces)
+        return found.map { r -> Route in
+            var u = r.url.trimmingCharacters(in: .whitespaces)
             if !u.contains("://") { u = "http://" + u }
             while u.hasSuffix("/") { u.removeLast() }
-            return u
-        }.filter { !$0.isEmpty && seen.insert($0).inserted }
+            return Route(url: u, token: r.token.flatMap { $0.isEmpty ? nil : $0 })
+        }.filter { !$0.url.isEmpty && seen.insert($0.url).inserted }
     }
 
     func start() {
@@ -208,13 +222,13 @@ final class HubFeed {
         let all = HubFeed.routes()
         attempt((route.map { [$0] } ?? []) + all.filter { $0 != route })
     }
-    private func attempt(_ list: [String]) {
+    private func attempt(_ list: [Route]) {
         guard let base = list.first else { route = nil; busy = false; return }
         let next = { self.attempt(Array(list.dropFirst())) }
-        get(base + "/api/state") { state in
+        get(base, "/api/state") { state in
             // Only what the page uses: the time and the sessions (the rest is the dashboard's history).
             guard let state = state as? [String: Any], let now = state["now"], let sessions = state["sessions"] else { return next() }
-            self.get(base + "/api/repos") { repos in
+            self.get(base, "/api/repos") { repos in
                 guard let repos = repos as? [[String: Any]],
                       let s = try? JSONSerialization.data(withJSONObject: ["now": now, "sessions": sessions]),
                       let r = try? JSONSerialization.data(withJSONObject: repos) else { return next() }
@@ -226,9 +240,11 @@ final class HubFeed {
             }
         }
     }
-    private func get(_ url: String, done: @escaping (Any?) -> Void) {
-        guard let u = URL(string: url) else { return done(nil) }
-        URLSession.shared.dataTask(with: URLRequest(url: u, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)) { data, res, _ in
+    private func get(_ route: Route, _ path: String, done: @escaping (Any?) -> Void) {
+        guard let u = URL(string: route.url + path) else { return done(nil) }
+        var req = URLRequest(url: u, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)
+        if let t = route.token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
+        URLSession.shared.dataTask(with: req) { data, res, _ in
             let ok = (res as? HTTPURLResponse)?.statusCode == 200
             let json = ok ? data.flatMap { try? JSONSerialization.jsonObject(with: $0) } : nil
             DispatchQueue.main.async { done(json) }
@@ -238,8 +254,8 @@ final class HubFeed {
     // The stream, on the route that answered. Each `live` or `repos` goes to the page with the latest of the other,
     // and `true` so it paces itself for updates a second apart (an older page takes the first two).
     private func connect() {
-        guard stream == nil, Date() >= retryAt, let base = route, let url = URL(string: base + "/api/stream") else { return }
-        let s = EventStream(url)
+        guard stream == nil, Date() >= retryAt, let base = route, let url = URL(string: base.url + "/api/stream") else { return }
+        let s = EventStream(url, token: base.token)
         stream = s
         s.onEvent = { [weak self] name, data in
             guard let self, let json = try? JSONSerialization.jsonObject(with: Data(data.utf8)) else { return }
@@ -262,7 +278,8 @@ final class HubFeed {
 }
 
 // ---- The relay ----------------------------------------------------------------------------------------------------
-// The built-in pages can't read the public relay themselves (it doesn't allow their origin, and they can't hold a
+// A hub may publish its public totals to a relay (agent-stats relay serve), which the widget reads when the hub can't
+// be reached, if one is set in the menu (Other Stats Relay…). The built-in pages can't read a relay themselves (it doesn't allow their origin, and they can't hold a
 // stream through the app's scheme), so the app follows the relay's /stream: a full `stats`, then merge patches as the
 // hub publishes. Each document goes to the page (window.relayFeed), and /relay/stats answers from it for older pages.
 // A relay without the stream (404) is fetched by /relay/stats as before, and its stream tried again every five minutes.
@@ -272,8 +289,8 @@ final class RelayFeed {
     private var stream: EventStream?, doc: [String: Any]?, fails = 0, retryAt = Date.distantPast, timer: Timer?
     var live: Bool { stream?.healthy == true && latest != nil }
 
-    static var base: String {
-        var b = Pref.relay ?? defaultRelay
+    static var base: String? {
+        guard var b = Pref.relay else { return nil }
         while b.hasSuffix("/") { b.removeLast() }
         if b.hasSuffix("/stats") { b.removeLast(6) }
         return b
@@ -294,7 +311,7 @@ final class RelayFeed {
     func restart() { stream?.close(); stream = nil; doc = nil; latest = nil; fails = 0; retryAt = .distantPast; connect() }
 
     private func connect() {
-        guard stream == nil, Date() >= retryAt, let url = URL(string: Self.base + "/stream") else { return }
+        guard stream == nil, Date() >= retryAt, let base = Self.base, let url = URL(string: base + "/stream") else { return }
         let s = EventStream(url)
         stream = s
         s.onEvent = { [weak self] name, text in
@@ -314,10 +331,241 @@ final class RelayFeed {
     }
 }
 
+// ---- agent-stats --------------------------------------------------------------------------------------------------
+// The app carries agent-stats (Contents/Helpers/agent-stats, see build.sh) and runs it as its background items, the
+// launchd jobs in Contents/Library/LaunchAgents: the reporter on every Mac, which counts the tokens its coding agents
+// use and sends them to the hub; on the main Mac also the hub, which keeps every machine's stats, and the updater,
+// which keeps a copy of the release for the hub's other machines. The widget shows the hub's view (HubFeed). An
+// agent-stats installed on its own (install.sh, launchd jobs dev.agent-stats.*) keeps running as it is, and the app
+// only reads it until asked to take it over.
+enum Stats {
+    struct Failure: Error { let message: String }
+    static let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/agent-stats")
+    static var bundled: Bool { FileManager.default.isExecutableFile(atPath: helper.path) }
+    static let report = SMAppService.agent(plistName: "com.kilcazn.tokiscope.report.plist")
+    static let hubJob = SMAppService.agent(plistName: "com.kilcazn.tokiscope.hub.plist")
+    static let updater = SMAppService.agent(plistName: "com.kilcazn.tokiscope.updater.plist")
+    private static let home = FileManager.default.homeDirectoryForCurrentUser
+    static var dir: URL {
+        ProcessInfo.processInfo.environment["AGENT_STATS_CONFIG_DIR"].map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent(".config/agent-stats")
+    }
+    static var hubToml: URL { dir.appendingPathComponent("hub.toml") }
+    static var configToml: URL { dir.appendingPathComponent("config.toml") }
+    // The first line of a hub.toml the app wrote: it only ever changes its own.
+    static let mark = "# Written by Tokiscope."
+    // The roles an agent-stats installed on its own runs here.
+    static var separate: [String] {
+        ["report", "hub", "relay", "updater"].filter {
+            FileManager.default.fileExists(atPath: home.appendingPathComponent("Library/LaunchAgents/dev.agent-stats.\($0).plist").path)
+        }
+    }
+    static var isHub: Bool { FileManager.default.fileExists(atPath: hubToml.path) }
+    static var joined: Bool { ((try? String(contentsOf: configToml, encoding: .utf8)) ?? "").contains("[[hub]]") }
+    static var setUp: Bool { isHub || joined || !separate.isEmpty }
+    static var label: String { (SCDynamicStoreCopyComputerName(nil, nil) as String?) ?? ProcessInfo.processInfo.hostName }
+    // The port in hub.toml's `listen`.
+    static var hubPort: Int {
+        let text = (try? String(contentsOf: hubToml, encoding: .utf8)) ?? ""
+        let listen = text.split(separator: "\n").first { $0.hasPrefix("listen") }.flatMap { quoted(String($0)).first }
+        return listen.flatMap { $0.split(separator: ":").last.flatMap { Int($0) } } ?? 7777
+    }
+    static var localHub: String { "http://127.0.0.1:\(hubPort)" }
+    // The strings in a line of TOML.
+    static func quoted(_ line: String) -> [String] { line.split(separator: "\"", omittingEmptySubsequences: false).enumerated().filter { $0.offset % 2 == 1 }.map { String($0.element) } }
+    private static func tomlString(_ s: String) -> String { s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") }
+
+    // What runs here, for the menu: the app's jobs, else the separate install's.
+    static func summary(_ version: String?) -> String {
+        let jobs = [(hubJob, "hub"), (report, "reporter")]
+        if jobs.contains(where: { $0.0.status == .requiresApproval }) { return "agent-stats: Allow It in Login Items" }
+        let on = jobs.filter { $0.0.status == .enabled }.map(\.1)
+        if !on.isEmpty { return "agent-stats\(version.map { " " + $0 } ?? ""): \(on.joined(separator: " and ")) running" }
+        if !separate.isEmpty { return "agent-stats: Installed Separately (\(separate.joined(separator: ", ")))" }
+        return "agent-stats: Not Set Up"
+    }
+
+    // ---- Running it: these block, so call them off the main thread.
+    // agent-stats with `args` (or another program): its output, or a Failure with what it said.
+    @discardableResult static func exec(_ args: [String], program: URL = helper, timeout: TimeInterval? = nil) throws -> String {
+        let p = Process(), out = Pipe(), err = Pipe()
+        p.executableURL = program; p.arguments = args; p.standardOutput = out; p.standardError = err
+        do { try p.run() } catch { throw Failure(message: "\(program.lastPathComponent): \(error.localizedDescription)") }
+        if let timeout { DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { if p.isRunning { p.terminate() } } }
+        let o = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let e = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else {
+            throw Failure(message: [e, o].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? "\(program.lastPathComponent) \(args.first ?? "") failed")
+        }
+        return o
+    }
+    static func version() -> String? { (try? exec(["version"]))?.split(separator: " ").dropFirst().first.map(String.init) }
+    // Starts one of the app's jobs (it then starts with every login), unless it runs already.
+    static func start(_ job: SMAppService) throws {
+        guard job.status != .enabled else { return }
+        do { try job.register() } catch {
+            if job.status == .requiresApproval {
+                SMAppService.openSystemSettingsLoginItems()
+                throw Failure(message: "macOS asks you to allow Tokiscope's background items: turn Tokiscope on in System Settings › General › Login Items & Extensions, then try again.")
+            }
+            throw Failure(message: "Couldn't start agent-stats (\(error.localizedDescription)).")
+        }
+    }
+    static func restart(_ label: String) throws {
+        try exec(["kickstart", "-k", "gui/\(getuid())/\(label)"], program: URL(fileURLWithPath: "/bin/launchctl"))
+    }
+    // Waits up to 20 s for the hub here to answer.
+    static func waitForHub() throws {
+        for _ in 0..<40 {
+            let done = DispatchSemaphore(value: 0)
+            var up = false
+            var req = URLRequest(url: URL(string: localHub + "/.well-known/agent-stats")!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 2)
+            req.httpMethod = "GET"
+            URLSession.shared.dataTask(with: req) { _, res, _ in up = (res as? HTTPURLResponse)?.statusCode == 200; done.signal() }.resume()
+            done.wait()
+            if up { return }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        throw Failure(message: "The hub didn't start (its log: ~/.local/state/agent-stats/logs/hub.log).")
+    }
+    // This Mac's name on dashboards, unless config.toml says one already.
+    private static func writeLabel() throws {
+        guard !FileManager.default.fileExists(atPath: configToml.path) else { return }
+        try write(configToml, "# agent-stats reporter config. See docs/ARCHITECTURE.md.\nlabel = \"\(tomlString(label))\"\n")
+    }
+    private static func write(_ url: URL, _ text: String) throws {
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: url, options: .atomic)
+        } catch { throw Failure(message: "\(url.path): \(error.localizedDescription)") }
+    }
+    // The `agent-stats join <url> --code <code>` line `hub pair` prints.
+    private static func joinLine(_ out: String) throws -> String {
+        guard let line = out.split(separator: "\n").map(String.init).first(where: { $0.hasPrefix("agent-stats join ") }) else {
+            throw Failure(message: "agent-stats hub pair didn't print a code.")
+        }
+        return line
+    }
+    private static func parse(_ line: String) -> (url: String, code: String)? {
+        let w = line.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let url = w.first(where: { $0.contains("://") }), let i = w.firstIndex(of: "--code"), i + 1 < w.count else { return nil }
+        return (url, w[i + 1])
+    }
+
+    // The main Mac: a hub only this Mac reaches (Add Machine… opens it to the network), the reporter joined to it.
+    static func becomeHub() throws {
+        if !isHub {
+            try write(hubToml, """
+                \(mark) Every key is described in https://github.com/kcazin/agent-stats/blob/main/docs/ARCHITECTURE.md (hub.toml).
+                name = "\(tomlString(label))"
+                # Only this Mac reaches the hub until Add Machine… opens it to the network.
+                listen = "127.0.0.1:7777"
+
+                """)
+        }
+        try writeLabel()
+        try start(hubJob)
+        try start(updater)
+        try waitForHub()
+        let state = ProcessInfo.processInfo.environment["XDG_STATE_HOME"].map { URL(fileURLWithPath: $0).appendingPathComponent("agent-stats") }
+            ?? home.appendingPathComponent(".local/state/agent-stats")
+        let id = ((try? String(contentsOf: state.appendingPathComponent("hub-id"), encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let config = (try? String(contentsOf: configToml, encoding: .utf8)) ?? ""
+        if id.isEmpty || !config.contains("\"\(id)\"") {
+            guard let p = parse(try joinLine(try exec(["hub", "pair", "--label", label]))) else { throw Failure(message: "agent-stats hub pair didn't print a code.") }
+            try exec(["join", localHub, "--code", p.code])
+        }
+        try start(report)
+    }
+
+    // Another Mac's hub, from the line its Add Machine… shows.
+    static func join(_ line: String) throws {
+        guard let p = parse(line) else { throw Failure(message: "Paste the whole line the main Mac's Add Machine… shows: agent-stats join http://… --code …") }
+        try writeLabel()
+        try exec(["join", p.url, "--code", p.code])
+        try start(report)
+    }
+
+    // A one-time `agent-stats join …` line for a new machine. A hub.toml the app wrote and only this Mac reaches is
+    // first opened to the network: it listens on every interface and tells reporters its Tailscale address, its
+    // .local name and its address on the local network, in that order.
+    static func pair() throws -> String {
+        let text = (try? String(contentsOf: hubToml, encoding: .utf8)) ?? ""
+        if text.hasPrefix(mark), let listen = text.split(separator: "\n").first(where: { $0.hasPrefix("listen = \"127.0.0.1:") }) {
+            let port = hubPort
+            let all = addresses(), lan = all.filter { !$0.hasPrefix("100.") }
+            var hosts = tailscale() ?? all.filter { $0.hasPrefix("100.") }
+            if let name = SCDynamicStoreCopyLocalHostName(nil) as String? { hosts.append(name + ".local") }
+            hosts += lan
+            let open = """
+                # Add Machine… opened the hub to the network: other machines reach it at these addresses, in this order.
+                listen = "0.0.0.0:\(port)"
+                advertise = [\(hosts.map { "\"http://\($0):\(port)\"" }.joined(separator: ", "))]
+                """
+            try write(hubToml, text.replacingOccurrences(of: "# Only this Mac reaches the hub until Add Machine… opens it to the network.\n", with: "")
+                .replacingOccurrences(of: String(listen), with: open))
+            try restart("com.kilcazn.tokiscope.hub")
+            Thread.sleep(forTimeInterval: 1)
+            try waitForHub()
+        }
+        return try joinLine(try exec(["hub", "pair"]))
+    }
+
+    // This Mac's Tailscale IPv4, when Tailscale's command line answers. (Other VPNs use its range too.)
+    static func tailscale() -> [String]? {
+        for path in ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"]
+        where FileManager.default.isExecutableFile(atPath: path) {
+            let ips = ((try? exec(["ip", "-4"], program: URL(fileURLWithPath: path), timeout: 5)) ?? "")
+                .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.hasPrefix("100.") }
+            if !ips.isEmpty { return ips }
+        }
+        return nil
+    }
+    // This Mac's IPv4 addresses others may reach: in Tailscale's range (100.64.0.0/10) and the local network's.
+    static func addresses() -> [String] {
+        var list: [String] = [], ifs: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifs) == 0 else { return [] }
+        defer { freeifaddrs(ifs) }
+        var p = ifs
+        while let i = p?.pointee {
+            defer { p = i.ifa_next }
+            guard let sa = i.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET), i.ifa_flags & UInt32(IFF_UP) != 0, i.ifa_flags & UInt32(IFF_LOOPBACK) == 0 else { continue }
+            let a = sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
+            let tailnet = a >> 22 == (100 << 2 | 1), lan = a >> 24 == 10 || a >> 20 == (172 << 4 | 1) || a >> 16 == (192 << 8 | 168)
+            guard tailnet || lan else { continue }
+            let s = "\(a >> 24).\(a >> 16 & 255).\(a >> 8 & 255).\(a & 255)"
+            if !list.contains(s) { list.append(s) }
+        }
+        return list
+    }
+
+    // Stops the app's jobs (config and stats stay).
+    static func stop() throws {
+        for job in [report, hubJob, updater] where [.enabled, .requiresApproval].contains(job.status) {
+            do { try job.unregister() } catch { throw Failure(message: "Couldn't stop agent-stats (\(error.localizedDescription)).") }
+        }
+    }
+
+    // The app takes over the jobs of an agent-stats installed on its own (the relay stays as it is): same config, same
+    // state, so nothing is lost. If one of the app's jobs doesn't start, that install's are put back.
+    static func takeOver() throws {
+        let bin = home.appendingPathComponent(".local/bin/agent-stats"), roles = separate.filter { $0 != "relay" }
+        for r in roles { try exec(["service", "uninstall", r], program: bin) }
+        do {
+            if roles.contains("hub") { try start(hubJob); try start(updater); try waitForHub() }
+            if roles.contains("report") { try start(report) }
+        } catch {
+            for job in [report, hubJob, updater] where job.status == .enabled { try? job.unregister() }
+            for r in roles { _ = try? exec(["service", "install", r], program: bin) }
+            throw error
+        }
+    }
+}
+
 // ---- The pages ----------------------------------------------------------------------------------------------------
 // The app carries its pages (lab/ in its Resources) and serves them itself as tokiscope://app/…, so it needs no site.
-// The public relay only answers pages from http://localhost and kilcazn.com, so these read it through the app:
-// /relay/stats answers from the relay's stream (RelayFeed), or is fetched here, from the relay the menu picks.
+// A relay answers only the sites it allows, so these read it through the app: /relay/stats answers from the relay's
+// stream (RelayFeed), or is fetched here, from the relay the menu picks.
 final class BundlePages: NSObject, WKURLSchemeHandler {
     static let scheme = "tokiscope", origin = "tokiscope://app"
     private static let types = ["html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
@@ -338,7 +586,7 @@ final class BundlePages: NSObject, WKURLSchemeHandler {
 
     private func relay(_ task: WKURLSchemeTask, _ url: URL) {
         if feed?.live == true, let doc = feed?.latest { return respond(task, url, 200, "application/json", doc) }
-        guard let u = URL(string: RelayFeed.base + "/stats") else { return respond(task, url, 502, "text/plain", Data()) }
+        guard let base = RelayFeed.base, let u = URL(string: base + "/stats") else { return respond(task, url, 404, "text/plain", Data()) }
         let id = ObjectIdentifier(task)
         open.insert(id)
         URLSession.shared.dataTask(with: URLRequest(url: u, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)) { data, res, _ in
@@ -369,6 +617,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     private let hub = HubFeed()
     private let relay = RelayFeed()
     private let pages = BundlePages()
+    private var busy: String?                             // what agent-stats is being set up to do, for the menu
+    private var statsVersion: String?
 
     static func main() {
         let app = NSApplication.shared
@@ -379,6 +629,26 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        // For scripts and tests: `Tokiscope --stats hub | join "<line>" | pair | take-over | stop | status` does what
+        // the menu would (stop: the app's background items, until set up again), prints how it went and quits.
+        if let i = CommandLine.arguments.firstIndex(of: "--stats") {
+            let a = Array(CommandLine.arguments.dropFirst(i + 1))
+            do {
+                switch a.first {
+                case "hub": try Stats.becomeHub(); print("hub and reporter running")
+                case "join" where a.count > 1: try Stats.join(a[1]); print("reporter running")
+                case "pair": print(try Stats.pair())
+                case "take-over": try Stats.takeOver(); print("taken over")
+                case "stop": try Stats.stop(); print("stopped")
+                case "status": print(Stats.summary(Stats.version())); print(HubFeed.routes().map { $0.url + ($0.token == nil ? "" : " (view token)") }.joined(separator: "\n"))
+                default: print("usage: Tokiscope --stats hub | join \"<line>\" | pair | take-over | stop | status"); exit(2)
+                }
+                exit(0)
+            } catch {
+                FileHandle.standardError.write(Data("\((error as? Stats.Failure)?.message ?? "\(error)")\n".utf8))
+                exit(1)
+            }
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--url"), i + 1 < CommandLine.arguments.count { Pref.customURL = CommandLine.arguments[i + 1] }
         if let i = CommandLine.arguments.firstIndex(of: "--site"), i + 1 < CommandLine.arguments.count { Pref.site = CommandLine.arguments[i + 1] }
 
@@ -455,6 +725,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         relay.onUpdate = { [weak self] js in self?.feedPages().forEach { $0.evaluateJavaScript("window.relayFeed?.(\(js))") } }
         relay.start()
         if CommandLine.arguments.contains("--settings") { openSettings() }
+        if Stats.bundled {
+            DispatchQueue.global().async { let v = Stats.version(); DispatchQueue.main.async { self.statsVersion = v } }
+            // First launch: which part this Mac plays. Asked once; the menu has it after.
+            if !Stats.setUp, !UserDefaults.standard.bool(forKey: "setupOffered") {
+                UserDefaults.standard.set(true, forKey: "setupOffered")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.setUp() }
+            }
+        }
     }
 
     private var layout: Layout { layouts.compactMap { $0 }.first { $0.key == Pref.layout } ?? layouts[0]! }
@@ -464,14 +742,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         return NSSize(width: (s.width + p) * Pref.zoom, height: (s.height + p) * Pref.zoom)
     }
 
-    // A lab page from where the pages load, reading the stats from the relay the menu picks.
+    // A lab page from where the pages load, reading the stats from the relay the menu picks, if any.
     private func link(_ page: String, custom: String? = nil) -> URL? {
         var page = page
         // A local copy reads the stats from another relay when given one; the built-in pages always through the app.
         if let relay = Pref.relay, Pref.site != BundlePages.origin,
            let q = relay.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~:/"))) { page += "&relay=\(q)" }
         var link = custom ?? Pref.site + page
-        if link.hasPrefix(BundlePages.origin + "/"), !link.contains("relay=") {
+        if Pref.relay != nil, link.hasPrefix(BundlePages.origin + "/"), !link.contains("relay=") {
             link += (link.contains("?") ? "&" : "?") + "relay=\(BundlePages.origin)/relay"
         }
         return URL(string: link)
@@ -751,9 +1029,21 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
             pick(sub, "Other Page URL…", Pref.customURL != nil, 0, #selector(editURL))
             pick(sub, "Other Stats Relay…", Pref.relay != nil, 0, #selector(editRelay))
             sub.addItem(.separator())
-            sub.addItem(withTitle: (hub.route.map { "Stats From the Hub, \(URL(string: $0)?.host ?? $0)" } ?? "Stats From the Public Relay (No Hub)")
+            sub.addItem(withTitle: (hub.route.map { "Stats From the Hub, \(URL(string: $0.url)?.host ?? $0.url)" }
+                                    ?? (Pref.relay != nil ? "Stats From the Relay (No Hub)" : "No Stats: No Hub Answers"))
                         + ((hub.route != nil ? hub.live : relay.live) ? ", Live" : ""),
                         action: nil, keyEquivalent: "").isEnabled = false
+        }
+        menu.addItem(.separator())
+        if let busy { menu.addItem(withTitle: busy, action: nil, keyEquivalent: "").isEnabled = false }
+        else if Stats.bundled || Stats.setUp {
+            if !Stats.setUp { _ = add("Set Up This Mac…", false, #selector(setUp)) }
+            else {
+                _ = add("Add Machine…", false, #selector(addMachine))
+                if Stats.isHub { _ = add("Open the Hub's Dashboard", false, #selector(openDashboard)) }
+                if Stats.bundled, !Stats.separate.filter({ $0 != "relay" }).isEmpty { _ = add("Let Tokiscope Run agent-stats…", false, #selector(takeOver)) }
+            }
+            menu.addItem(withTitle: Stats.summary(statsVersion), action: nil, keyEquivalent: "").isEnabled = false
         }
         menu.addItem(.separator())
         let settings = add("Settings…", false, #selector(openSettings))
@@ -821,7 +1111,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     @objc private func editURL() {
         let alert = NSAlert()
         alert.messageText = "Page URL"
-        alert.informativeText = "A page to show instead of a layout. Built-in pages (tokiscope://app/…) read the stats through the app; others need a relay that allows them, like the public one does http://localhost."
+        alert.informativeText = "A page to show instead of a layout. Built-in pages (tokiscope://app/…) read the stats through the app; others need a relay that allows them."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
         field.stringValue = Pref.customURL ?? Pref.site + layout.path
         alert.accessoryView = field
@@ -839,13 +1129,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     @objc private func editRelay() {
         let alert = NSAlert()
         alert.messageText = "Stats Relay"
-        alert.informativeText = "Where the layouts and bubbles read the stats: a relay, or a hub that serves /stats itself. The built-in pages read it through the app; a local copy needs one that allows http://localhost."
+        alert.informativeText = "Where the layouts and bubbles read the stats when no hub answers: a relay your hub publishes to (agent-stats relay serve), or a hub that serves /stats itself. The built-in pages read it through the app; a local copy needs one that allows http://localhost."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
-        field.stringValue = Pref.relay ?? defaultRelay
+        field.stringValue = Pref.relay ?? ""
         alert.accessoryView = field
         alert.addButton(withTitle: "Use")
         alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Use the Default")
+        alert.addButton(withTitle: "Use None")
         NSApp.activate(ignoringOtherApps: true)
         switch alert.runModal() {
         case .alertFirstButtonReturn:
@@ -853,6 +1143,138 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
             Pref.relay = v.isEmpty ? nil : v; relay.restart(); load()
         case .alertThirdButtonReturn: Pref.relay = nil; relay.restart(); load()
         default: break
+        }
+    }
+
+    // ---- agent-stats ----------------------------------------------------------------------------------------------
+    // Runs `work` off the main thread with `doing` in the menu, then says how it went.
+    private func background(_ doing: String, _ work: @escaping () throws -> String?, done: ((String) -> Void)? = nil) {
+        busy = doing
+        DispatchQueue.global().async {
+            let r = Result { try work() }
+            DispatchQueue.main.async {
+                self.busy = nil
+                self.hub.fetch()
+                switch r {
+                case .success(let note?): done?(note) ?? self.say("Done", note)
+                case .success(nil): break
+                case .failure(let e): self.say("That Didn't Work", (e as? Stats.Failure)?.message ?? e.localizedDescription, style: .warning)
+                }
+            }
+        }
+    }
+    private func say(_ title: String, _ text: String, style: NSAlert.Style = .informational) {
+        let alert = NSAlert()
+        alert.alertStyle = style
+        alert.messageText = title
+        alert.informativeText = text
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    @objc private func setUp() {
+        let alert = NSAlert()
+        alert.messageText = "Set Up Tokiscope"
+        alert.informativeText = """
+            Tokiscope shows the tokens your coding agents (Claude Code, Codex and others) use. One Mac keeps the stats:             it runs the hub. Every machine, that one included, counts its own agents and reports them to the hub.
+
+            Use another machine too? Set up the main one first, then add the others from its menu (Add Machine…).
+            """
+        alert.addButton(withTitle: "This Is the Main Mac")
+        alert.addButton(withTitle: "Join Another Mac…")
+        alert.addButton(withTitle: "Later")
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            background("Setting Up the Hub…") {
+                try Stats.becomeHub()
+                return "This Mac runs the hub and counts its agents. To add another machine, choose Add Machine… in the menu."
+            }
+        case .alertSecondButtonReturn: joinHub()
+        default: break
+        }
+    }
+
+    private func joinHub() {
+        let alert = NSAlert()
+        alert.messageText = "Join Another Mac"
+        alert.informativeText = "On the main Mac, choose Add Machine… in Tokiscope's menu, then paste the line it shows here."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 400, height: 24))
+        field.placeholderString = "agent-stats join http://… --code …"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Join")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let line = field.stringValue
+        background("Joining the Hub…") {
+            try Stats.join(line)
+            return "This Mac counts its agents and reports them to the hub."
+        }
+    }
+
+    @objc private func addMachine() {
+        guard Stats.isHub else {
+            let host = hub.route.flatMap { URL(string: $0.url)?.host }
+            return say("Add Machine", "Machines are added on the main Mac, the one that runs the hub\(host.map { " (\($0))" } ?? ""): choose Add Machine… in Tokiscope's menu there.")
+        }
+        let open = ((try? String(contentsOf: Stats.hubToml, encoding: .utf8)) ?? "").contains("listen = \"127.0.0.1:")
+        if open {
+            let alert = NSAlert()
+            alert.messageText = "Open the Hub to Your Network?"
+            alert.informativeText = """
+                Until now only this Mac reaches the hub. Other machines will reach it on port \(Stats.hubPort), over                 Tailscale or your local network. Each needs a one-time code to join; without one, nobody can report                 or read anything. macOS may ask whether agent-stats may accept incoming connections: allow it.
+                """
+            alert.addButton(withTitle: "Open It")
+            alert.addButton(withTitle: "Cancel")
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        background("Making a Code…", { try Stats.pair() }) { [weak self] line in self?.showCode(line) }
+    }
+
+    private func showCode(_ line: String) {
+        let install = "curl -fsSL https://raw.githubusercontent.com/kcazin/agent-stats/main/install.sh | sh && ~/.local/bin/"
+        let alert = NSAlert()
+        alert.messageText = "Add a Machine"
+        alert.informativeText = """
+            On a Mac: open Tokiscope there, choose Join Another Mac…, and paste:
+
+            \(line)
+
+            On Linux, or a Mac without Tokiscope, run this in a terminal (it installs agent-stats, then joins):
+
+            \(install)\(line)
+
+            The code works once, for 10 minutes.
+            """
+        alert.addButton(withTitle: "Copy for Tokiscope")
+        alert.addButton(withTitle: "Copy for a Terminal")
+        alert.addButton(withTitle: "Done")
+        NSApp.activate(ignoringOtherApps: true)
+        let r = alert.runModal()
+        guard r != .alertThirdButtonReturn else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(r == .alertFirstButtonReturn ? line : install + line, forType: .string)
+    }
+
+    @objc private func openDashboard() { if let u = URL(string: Stats.localHub + "/") { NSWorkspace.shared.open(u) } }
+
+    @objc private func takeOver() {
+        let roles = Stats.separate.filter { $0 != "relay" }
+        let alert = NSAlert()
+        alert.messageText = "Let Tokiscope Run agent-stats?"
+        alert.informativeText = """
+            agent-stats was installed on its own here (\(roles.joined(separator: ", "))). Tokiscope can run it instead,             as its background items, and keep it up to date with the app. The config and the stats stay where they are.
+            """
+        alert.addButton(withTitle: "Let Tokiscope Run It")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        background("Taking Over agent-stats…") {
+            try Stats.takeOver()
+            return "Tokiscope runs agent-stats here now. ~/.local/bin/agent-stats stays for the terminal; Tokiscope's own copy is the one that runs."
         }
     }
 

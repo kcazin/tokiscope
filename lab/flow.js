@@ -520,13 +520,15 @@ let demoing = false;
 export function demo() {
   if (demoing || new URLSearchParams(location.search).get('relay') !== 'demo') return;
   demoing = true;
-  const keys = ['neon', 'chum', 'contenthall', 'other'], day = new Date().toLocaleDateString('en-CA');
-  const all = { neon: 66.9e9, chum: 8.98e8, contenthall: 1.78e9, other: 9.51e9 }, today = { neon: 1.12e9, chum: 4.1e7, contenthall: 8.2e6, other: 6.37e8 };
+  const keys = ['game', 'app', 'site', 'other'], day = new Date().toLocaleDateString('en-CA');
+  const projectList = [{ key: 'game', name: 'My Game', color: '#e2502b' }, { key: 'app', name: 'The App', color: '#f0a030' },
+    { key: 'site', name: 'Website', color: '#3987e5' }, { key: 'other', name: 'Other' }];
+  const all = { game: 66.9e9, app: 8.98e8, site: 1.78e9, other: 9.51e9 }, today = { game: 1.12e9, app: 4.1e7, site: 8.2e6, other: 6.37e8 };
   const MODELS = ['Opus 5.5', 'Opus 5.5', 'Sonnet 5.5', 'Fable 5.1'], agents = [];
   let n = 0;
   const add = (project, kind = 'main') => agents.push({ id: 'demo' + n++, parent: null, agent: 'claude', kind, project, state: 'run',
     model: MODELS[Math.random() * MODELS.length | 0], io: { in: 0, cr: 0, cw: 0, out: 0 }, next: Date.now() + Math.random() * 4000, pace: 5000 + Math.random() * 12000 });
-  ['neon', 'neon', 'other', 'contenthall'].forEach(p => add(p));
+  ['game', 'game', 'other', 'site'].forEach(p => add(p));
   setInterval(() => {
     const now = Date.now();
     for (const a of agents) if (now >= a.next) {
@@ -537,7 +539,7 @@ export function demo() {
     }
     if (Math.random() < 0.03 && agents.length < 6) add(keys[Math.random() * 4 | 0], 'subagent');
     else if (Math.random() < 0.015 && agents.length > 3) agents.splice(3 + (Math.random() * (agents.length - 3) | 0), 1);
-    window.relayFeed({ updated: now, live: { agents: agents.map(({ next, pace, ...a }) => a) }, today: { day },
+    window.relayFeed({ updated: now, live: { agents: agents.map(({ next, pace, ...a }) => a) }, today: { day }, projectList,
       projects: { all: { ...all }, today: { ...today }, last: Object.fromEntries(keys.map(k => [k, 1])), lastMs: 1000 } });
   }, 1000);
 }
