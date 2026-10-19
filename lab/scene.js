@@ -80,7 +80,9 @@ function skyAt(alt) {
 const NIGHT = [9, 11, 20];                                   // what a landmark is at night, unlit
 
 // ---- The painter the landmarks draw with ---------------------------------------------------------------------------
-// In CSS px, x across and y up from the ground (row 0 is the one standing on it).
+// In the backdrop's own pixels, x across and y up from the ground (row 0 is the one standing on it): a CSS px on a
+// plain screen, half of one on a Retina one, for twice the detail. `u` is how many make a CSS px, for lights and
+// lettering that must stay as big.
 function painter(ctx, s) {
   const memo = new Map(), B = s.B;
   const g = {
@@ -131,23 +133,42 @@ function painter(ctx, s) {
       return al < 0.04 ? null : css(hex(h), al);
     },
     blink: (period, phase = 0, duty = 0.5) => ((s.t / period + phase) % 1 + 1) % 1 < duty,
-    beacon(x, y, h = '#ff3b2f', period = 1.6) { if (g.blink(period, x * 0.013)) g.px(x, y, g.lamp(h, 1, true)); },
+    // An aviation light: a CSS px, blinking, red unless said, seen by day too.
+    beacon(x, y, h = '#ff3b2f', period = 1.6) {
+      if (!g.blink(period, x * 0.013)) return;
+      const c = g.lamp(h, 1, true);
+      g.rect(x - (s.u >> 1), y, s.u, s.u, c);
+      if (s.night > 0.5 && s.u > 1) g.rect(x - s.u, y - 1, s.u * 2, s.u + 2, g.lamp(h, 0.18));   // a halo round it at night
+    },
+    // A point of light that twinkles at night, each at its own pace.
+    twinkle(x, y, h, seed = 0, size = 1) {
+      if (s.night < 0.1) return;
+      const k = hash(x, y, seed), a = (0.5 + 0.5 * Math.sin(s.t * (1.5 + 3 * k) + k * 6.283)) ** 2;
+      g.rect(x, y, size, size, g.lamp(h, 0.25 + 0.75 * a));
+    },
     // Lit windows at night: few after midnight, most in the evening; a few change every ten minutes.
     window(x, y, seed) {
       if (s.night < 0.05) return;
       const p = s.hour >= 17 || s.hour < 1 ? 0.34 : s.hour < 5 ? 0.1 : 0.22;
       const on = hash(seed, x, y) < p !== hash(seed, x, y, Math.floor(s.ms / 6e5)) < 0.04;
-      if (on) g.px(x, y, g.lamp(hash(x, y, seed, 1) < 0.25 ? '#dfe8ff' : '#ffd27a', 0.55 + 0.4 * hash(x, y, 2)));
+      if (!on) return;
+      const col = hash(x, y, seed, 1) < 0.25 ? '#dfe8ff' : '#ffd27a';
+      // A few flicker (a screen, a television).
+      if (hash(x, y, seed, 3) < 0.08) g.twinkle(x, y, col, seed);
+      else g.px(x, y, g.lamp(col, 0.55 + 0.4 * hash(x, y, 2)));
     },
     // A city, block by block, between x0 and x1, lo to hi tall.
     skyline(seed, x0, x1, lo, hi, depth = 0.5, hues = ['#6f7682', '#5f6774', '#7c818b', '#686c74']) {
       const r = rng(seed);
       for (let x = Math.round(x0); x < x1;) {
-        const w = 4 + (r() * 8 | 0), h = Math.max(2, Math.round(lo + (hi - lo) * r() ** 1.4)), col = hues[r() * hues.length | 0];
+        const w = (4 + (r() * 8 | 0)) * s.u, h = Math.max(2, Math.round(lo + (hi - lo) * r() ** 1.4)), col = hues[r() * hues.length | 0];
         g.rect(x, 0, w, h, g.c(col, depth));
-        if (r() < 0.18) g.rect(x + (w >> 1), h, 1, 2 + (r() * 3 | 0), g.c(col, depth));
+        const mast = r() < 0.18 ? (2 + (r() * 3 | 0)) * s.u : 0;
+        if (mast) g.rect(x + (w >> 1), h, s.u > 1 ? 1 : 1, mast, g.c(col, depth));
+        // The tall ones carry an aviation light.
+        if (h > lo + (hi - lo) * 0.6 && h > 8 * s.u) g.beacon(x + (w >> 1), h + mast, '#ff3b2f', 1.3 + hash(x, 5));
         if (h > 3) for (let wy = 2; wy < h - 1; wy += 2) for (let wx = x + 1; wx < x + w - 1; wx += 2) g.window(wx, wy, seed);
-        x += w + (r() < 0.3 ? 1 : 0);
+        x += w + (r() < 0.3 ? s.u : 0);
       }
     },
     hill(cx, w, h, col, depth, rough = 0.15) {
@@ -172,14 +193,27 @@ function tokyoTower(g, cx, h) {
   };
   deck(Math.round(h * 0.44), 3, 2.2);
   deck(Math.round(h * 0.73), 2, 1.6);
-  for (let y = top; y < h; y++) g.row(cx, y, y < top + 3 ? 1.5 : 0.5, g.lit(Math.floor((y - top) / 2) % 2 ? '#e8e3d8' : '#d6532a', '#ff9a40', on));
+  for (let y = top; y < h; y++) g.row(cx, y, y < top + 3 * g.u ? 1.5 : 0.5, g.lit(Math.floor((y - top) / (2 * g.u)) % 2 ? '#e8e3d8' : '#d6532a', '#ff9a40', on));
+  // At night lights run up its edges and sparkle, and red lights mark the decks and the top.
+  if (on) for (let y = Math.round(legs); y < top; y += 2 * g.u) for (const side of [-1, 1]) {
+    const x = cx + side * Math.round(hw(y) - 0.5);
+    if (hash(y, side, 41) < 0.55) g.twinkle(x, y, hash(y, side) < 0.3 ? '#fff6dc' : '#ffd08a', 41);
+  }
+  const d1 = Math.round(h * 0.44) + 3, d2 = Math.round(h * 0.73) + 2;
+  for (const side of [-1, 1]) { g.beacon(cx + side * Math.round(hw(d1) + 2), d1, '#ff3b2f', 1.9); g.beacon(cx + side * Math.round(hw(d2) + 1), d2, '#ff3b2f', 1.7); }
   g.beacon(cx, h);
 }
+// At night its snow holds the moon's light (and the city's glow), and its ridge shows against the sky.
 function fuji(g, cx, h, depth = 0.72) {
+  const glow = 0.45 + 0.55 * Math.min(1, g.moonlight * 2);
+  const snow = g.lit('#eef1f6', '#8a97bc', glow, depth), rock = g.c('#56658a', depth), ridge = g.lit('#56658a', '#39456a', glow, depth);
+  const hw = y => h * 0.1 + h * 1.9 * Math.pow(1 - y / h, 1.7);
   for (let y = 0; y < h; y++) {
-    const u = y / h;
-    g.row(cx, y, h * 0.1 + h * 1.9 * Math.pow(1 - u, 1.7), x => g.c(u > 0.6 + 0.14 * hash(x >> 1, 5) ? '#eef1f6' : '#56658a', depth));
+    const u = y / h, n = Math.round(hw(y) - 0.5);
+    g.row(cx, y, hw(y), x => u > 0.2 && Math.abs(x - cx) >= n - (g.u - 1) && g.night > 0.3 ? ridge
+      : u > 0.6 + 0.14 * hash(x >> g.u, 5) ? snow : rock);
   }
+  g.row(cx, Math.round(h), h * 0.1, g.night > 0.3 ? ridge : rock);
 }
 function eiffel(g, cx, h) {
   const top = Math.round(h * 0.93), hw = y => 0.3 * h * Math.pow(Math.max(0, 1 - y / top), 2.7) + 0.5;
@@ -383,7 +417,8 @@ function cnTower(g, cx, h, pod = 0.58, podW = 0.085) {
   g.beacon(cx, h);
 }
 function pyramid(g, cx, h, cap) {
-  const lit = g.c('#d2ae72'), sh = g.c('#9e7e4c'), lit2 = g.c('#d2ae72', 0, 0.08), top = g.c('#e6d2a6');
+  // Floodlit at night, as Giza's are.
+  const lit = g.lit('#d2ae72', '#b58a4e', 0.45), sh = g.lit('#9e7e4c', '#7a5c36', 0.45), lit2 = g.lit('#d2ae72', '#a8804a', 0.45, 0, 0.08), top = g.lit('#e6d2a6', '#c8a46a', 0.45);
   for (let y = 0; y < h; y++) {
     const hw = h - y, a = y % 2 ? lit : lit2, c = cap && y > h * 0.84 ? top : null;
     if (g.sunLeft) { g.rect(cx - hw, y, hw, 1, c || a); g.rect(cx, y, hw, 1, sh); }
@@ -525,7 +560,13 @@ function skytree(g, cx, h) {
   }
   for (let k = 0; k < 3; k++) g.row(cx, d1 + k, h * 0.06 + 0.5 - (k === 2 ? 1 : 0), k === 1 ? win : a);
   for (let k = 0; k < 2; k++) g.row(cx, d2 + k, h * 0.042 + 0.5, k === 0 ? win : a);
-  for (let y = top; y < h; y++) g.row(cx, y, y < top + 3 ? 1 : 0.5, a);
+  for (let y = top; y < h; y++) g.row(cx, y, y < top + 3 * g.u ? 1 : 0.5, a);
+  // At night sparkles climb it, gold on Miyabi nights, white on Iki ones; red lights up the mast.
+  if (g.night > 0.2) for (let k = 0; k < 14; k++) {
+    const y = Math.round(((g.t * 6 * g.u + k * top / 14) % top)), hw = y < d1 ? h * 0.075 * (1 - y / d1) + h * 0.022 : h * 0.02;
+    g.twinkle(cx + (k % 2 ? 1 : -1) * Math.round(hw * hash(k, 7)), y, glow === '#b48cff' ? '#ffe39a' : '#ffffff', k);
+  }
+  for (const y of [d1 + 3, d2 + 2, Math.round(h * 0.88)]) g.beacon(cx, y, '#ff3b2f', 1.5);
   g.beacon(cx, h);
 }
 // A five-storey pagoda, Kyoto's.
@@ -790,7 +831,7 @@ function capitol(g, cx, h) {
   g.row(cx, Math.round(h * 0.78), 1, w);
 }
 function gatewayArch(g, cx, h) {
-  const lt = g.c('#c9ced4', 0.1), dk = g.c('#c9ced4', 0.1, 0.25), w = Math.round(h * 0.5), k = 1.9;
+  const lt = g.lit('#c9ced4', '#aeb8cc', 0.55, 0.1), dk = g.lit('#c9ced4', '#8a94a8', 0.55, 0.1, 0.25), w = Math.round(h * 0.5), k = 1.9;
   const yAt = (x, ww) => h * (1 - (Math.cosh(k * x / ww) - 1) / (Math.cosh(k) - 1));
   const win = w - Math.max(2, Math.round(h * 0.06));
   for (let x = -w; x <= w; x++) {
@@ -814,8 +855,9 @@ const LETTERS = { H: [5, 5, 7, 5, 5], O: [7, 5, 5, 5, 7], L: [4, 4, 4, 4, 7], Y:
 function hollywood(g, cx, h) {
   const hh = Math.round(h * 0.42);
   g.hill(cx, h * 1.1, hh, '#6b6a4c', 0.35, 0.18);
-  const white = g.c('#f0f0ee', 0.2), word = 'HOLLYWOOD', x0 = cx - Math.round(word.length * 4 / 2), y0 = Math.round(hh * 0.4);
-  [...word].forEach((ch, i) => LETTERS[ch].forEach((bits, r) => { for (let b = 0; b < 3; b++) if (bits & (4 >> b)) g.px(x0 + i * 4 + b, y0 + 4 - r, white); }));
+  const white = g.c('#f0f0ee', 0.2), word = 'HOLLYWOOD', y0 = Math.round(hh * 0.4);
+  const u = g.u, x1 = cx - Math.round(word.length * 4 * u / 2);
+  [...word].forEach((ch, i) => LETTERS[ch].forEach((bits, r) => { for (let b = 0; b < 3; b++) if (bits & (4 >> b)) g.rect(x1 + (i * 4 + b) * u, y0 + (4 - r) * u, u, u, white); }));
 }
 function peaceTower(g, cx, h) {
   const st = g.lit('#c2b49a', '#f0d8a0', 0.8), cu = g.c('#6f9c8a'), block = Math.round(h * 0.22), top = Math.round(h * 0.76);
@@ -1114,9 +1156,13 @@ export function backdrop(W, B, { at = Math.round(W * 0.36), city, clock: time = 
       for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) if (dx * dx + dy * dy <= 17) ctx.fillRect(Math.round(sx) + dx, Math.round(sy) + dy, 1, 1);
     }
     ctx.globalAlpha = 1;
-    const g = painter(ctx, { W, B, H: B - 14, cx: Math.round(at), t, ms, hour: hourIn(c.zones[0].endsWith('/') ? ZONE : c.zones[0], ms),
-      day, night, warm, hor: sky.hor, sunLeft: sx < at, moonlight });
+    // The landmarks at the screen's own pixels (twice the CSS px on a Retina screen).
+    const u = Math.max(1, Math.min(2, Math.round(dpr)));
+    ctx.save(); ctx.scale(1 / u, 1 / u);
+    const g = painter(ctx, { W: W * u, B: B * u, H: (B - 14) * u, cx: Math.round(at * u), u, t, ms,
+      hour: hourIn(c.zones[0].endsWith('/') ? ZONE : c.zones[0], ms), day, night, warm, hor: sky.hor, sunLeft: sx < at, moonlight });
     c.draw(g);
+    ctx.restore();
     // And the whole of it away at the sides.
     mask(ctx.createLinearGradient(0, 0, W, 0), [[0, 0], [0.06, 1], [0.94, 1], [1, 0]]);
   }
