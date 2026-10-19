@@ -34,11 +34,30 @@
 <script type="module">
   import { bubble, BUBBLES, CARDS, isCard } from './bubble.js';
   import { MACHINES } from './lab.js';
+  import { setKinds } from './flow.js';
+  import { setScene } from './scene.js';
   const q = new URLSearchParams(location.search), one = q.get('b');
   const open = isCard(q.get('open')) || MACHINES[q.get('open')] ? q.get('open') : 'haul';
   if (one && BUBBLES[one]) {
     document.documentElement.classList.add('one');
-    window.bubble = bubble(document.body, { style: one, open, app: q.has('app') });
+    // For the app: it pins the bubble to a corner, hovers and toggles it, and changes what shows in place (`set`), so
+    // the stats so far stay instead of the page loading again.
+    let style = one, what = open, corner = [false, false], b;
+    const make = wasOpen => { b = bubble(document.body, { style, open: what, app: q.has('app'), pin: wasOpen ? 'open' : null }); b.anchor(...corner); };
+    make(false);
+    window.bubble = {
+      hover: on => b.hover(on), toggle: () => b.toggle(),
+      anchor(t, l) { corner = [t, l]; b.anchor(t, l); },
+      set({ b: s, open: o, kinds, scene }) {
+        if (kinds) setKinds(kinds);
+        if (scene) setScene(scene);
+        if ((s && BUBBLES[s] && s !== style) || (o && o !== what && (isCard(o) || MACHINES[o]))) {
+          const wasOpen = b.isOpen;
+          style = BUBBLES[s] ? s : style; what = isCard(o) || MACHINES[o] ? o : what;
+          b.stop(); make(wasOpen);
+        }
+      },
+    };
   } else {
     // What a bubble opens into, shown open: the cards on the bubble each goes best with, and the layouts worth comparing.
     const PAIR = { classic: 'orb', speed: 'tach', agents: 'quake' }, FIELDS = ['haulflow', 'dash', 'haul'];

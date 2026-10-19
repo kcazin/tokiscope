@@ -301,6 +301,10 @@ export function bubble(root, { style = 'orb', open: what = 'haul', app = false, 
   let cv = null, layout = null;
   if (isCard(what)) { artEl.innerHTML = '<div class="card"></div>'; cv = CARDS[what.slice(5)].make(artEl.firstElementChild); }
   else if (what && MACHINES[what]) layout = what;
+  // Until the first stats come in: a ring turns round the ball, and what it opens into says so.
+  const wait = document.createElement('div');
+  wait.className = 'wait'; wait.textContent = 'Reading your tokens…';
+  const born = performance.now();
   // For the app: the full size the window needs (CSS px from the bottom right), and the parts that take the pointer.
   const msg = (name, body) => window.webkit?.messageHandlers?.[name]?.postMessage(body);
   // The window holds the bubble, or the opened field, whichever is bigger.
@@ -327,6 +331,7 @@ export function bubble(root, { style = 'orb', open: what = 'haul', app = false, 
   const api = {
     hover(on) { if (on !== hovering) { hovering = on; update(); } },
     toggle() { open = !open; update(); },
+    get isOpen() { return open; },
     // Pin the bubble to a corner; the field then opens away from it (down from the top, right from the left).
     anchor(t, l) { top = t; left = l; wrap.classList.toggle('top', t); wrap.classList.toggle('left', l); rects(); frame(); },
   };
@@ -338,6 +343,12 @@ export function bubble(root, { style = 'orb', open: what = 'haul', app = false, 
   const glow = { step() {}, draw(t) {
     ctx.clearRect(0, 0, D, D);
     view.draw(Math.min(0.05, t - (glow.t ?? t)), t); glow.t = t;
+    const loading = !feed.updated;
+    if (loading !== shell.classList.contains('loading')) {
+      shell.classList.toggle('loading', loading);
+      if (loading) artEl.append(wait); else wait.remove();
+    }
+    if (loading && performance.now() - born > 15000) wait.textContent = 'Waiting for agent-stats…';
   } };
   const stop = run(layout ? [[artEl, layout]] : [], cv ? [glow, cv] : [glow]);
   demo();
@@ -346,7 +357,7 @@ export function bubble(root, { style = 'orb', open: what = 'haul', app = false, 
   // For the app's menu: today at a glance, every second.
   const ticking = app ? setInterval(() => msg('today', today()), 1000) : 0;
   // Stops it, for a preview that was replaced.
-  api.stop = () => { stop(); clearInterval(ticking); feed.channels.splice(feed.channels.indexOf(ch), 1); };
+  api.stop = () => { stop(); clearInterval(ticking); feed.channels.splice(feed.channels.indexOf(ch), 1); wrap.remove(); };
   return api;
 }
 

@@ -1588,10 +1588,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         switch kind {
         case "ready": syncSettings()
         case "tab": if key == "machines" { discover() }
-        case "bubble": if bubbles.contains(where: { $0.0 == key }) { Pref.bubble = key; load(); syncSettings() }
-        case "open": if opens.contains(key) { Pref.open = key; load(); syncSettings() }
+        case "bubble": if bubbles.contains(where: { $0.0 == key }) { Pref.bubble = key; restyle(); syncSettings() }
+        case "open": if opens.contains(key) { Pref.open = key; restyle(); syncSettings() }
         case "kinds": useKinds(key.split(separator: ",").map(String.init))
-        case "scene": Pref.scene = key; load(); syncSettings()
+        case "scene": Pref.scene = key; restyle(); syncSettings()
         case "zoom": if let i = Int(key), zooms.indices.contains(i) { useZoom(i) }
         case "site": if let i = Int(key), sites.indices.contains(i) { useSite(i) }
         case "desktop": Pref.onDesktop = key == "1"; apply()
@@ -1670,13 +1670,19 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
 
     @objc private func toggleShown() { panel.isVisible ? panel.orderOut(nil) : panel.orderFrontRegardless() }
     @objc private func reload() { load() }
+    // The bubble, what it opens into, the tokens counted and the backdrop change in the page as it is (lab/bubble.html
+    // window.bubble.set), keeping the stats it has; the next load reads them from the URL.
+    private func restyle() {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["b": Pref.bubble, "open": Pref.open, "kinds": Pref.kinds, "scene": Pref.scene]) else { return load() }
+        web.evaluateJavaScript("window.bubble.set(\(String(decoding: data, as: UTF8.self)))") { [weak self] _, error in if error != nil { self?.load() } }
+    }
 
     // Turns one kind of token on or off; the last one left stays on.
     private func useKinds(_ list: [String]) {
         let valid = tokenKinds.map(\.0).filter { list.contains($0) }
         guard !valid.isEmpty, valid != Pref.kinds else { return }
         Pref.kinds = valid
-        load(); syncSettings()
+        restyle(); syncSettings()
     }
     // The bubble page asks for its new size once reloaded.
     private func useZoom(_ i: Int) { Pref.zoom = zooms[i].1; web.pageZoom = Pref.zoom; load(); syncSettings() }
