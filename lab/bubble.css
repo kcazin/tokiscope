@@ -1,6 +1,6 @@
-/* The bubble, its hover card and the field it opens (bubble.js), for bubble.html and settings.html. */
-/* The bubble and its hover card, side by side in the bottom right corner. */
-.bw { position: absolute; right: 0; bottom: 0; padding: 14px; display: flex; align-items: flex-end; gap: 8px; }
+/* The bubble and what it opens into (bubble.js), for bubble.html and settings.html. */
+/* The bubble, in the bottom right corner. */
+.bw { position: absolute; right: 0; bottom: 0; padding: 14px; display: flex; align-items: flex-end; }
 /* The shell is the bubble: a dark ball with a hairline edge that reads on light and dark wallpapers, and a small
    shadow that stays inside the window. Clicked, it grows from its corner into the field, the ball fading out and
    the field fading in as it opens; clicked again, it shrinks back. It bobs while it is a bubble. */
@@ -20,18 +20,12 @@
 .shell.open .art { opacity: 1; transition: opacity .24s ease .26s; }
 @keyframes bob { 50% { translate: 0 -3px; } }
 @keyframes flash { 40% { scale: 1.04; } }
-/* The hover card: always laid out, invisible until shown; it fades and grows a little out of the bubble's side. */
-.panel { background: #0e0e0e; border-radius: 12px; box-shadow: 0 0 0 1px rgb(255 255 255 / .08), 0 0 0 1.5px rgb(0 0 0 / .15), 0 3px 8px rgb(0 0 0 / .3);
-  transform-origin: 100% 100%; opacity: 0; visibility: hidden; pointer-events: none; transform: translate(6px, 4px) scale(.94);
-  transition: opacity .16s ease-in, transform .18s ease-in, visibility 0s linear .18s; }
 /* Pinned to another corner (the app moves the bubble near the top or left of the screen), everything mirrors. */
-.bw.top { top: 0; bottom: auto; align-items: flex-start; --oy: 0%; --sy: -4px; }
-.bw.left { left: 0; right: auto; flex-direction: row-reverse; --ox: 0%; --sx: -6px; }
+.bw.top { top: 0; bottom: auto; align-items: flex-start; }
+.bw.left { left: 0; right: auto; }
 .bw.top .ball, .bw.top .art { top: 0; bottom: auto; }
 .bw.left .ball, .bw.left .art { left: 0; right: auto; }
-.panel { transform-origin: var(--ox, 100%) var(--oy, 100%); transform: translate(var(--sx, 6px), var(--sy, 4px)) scale(.94); }
-.panel.in { opacity: 1; visibility: visible; pointer-events: auto; transform: none;
-  transition: opacity .26s cubic-bezier(.2, .8, .2, 1) .05s, transform .34s cubic-bezier(.2, .8, .2, 1) .05s, visibility 0s; }
+/* The cards, opened in the field or shown in a gallery. */
 .card { width: 228px; padding: 10px 12px; font: 400 11px/1.4 "Geist Mono", ui-monospace, monospace; color: #bdbdbd; }
 .card p { margin: 0; }
 .card b { font-weight: 400; color: #e8e8e8; }

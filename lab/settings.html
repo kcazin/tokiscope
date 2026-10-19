@@ -7,76 +7,100 @@
 <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400&family=Schibsted+Grotesk:wght@400;500&display=swap" rel="stylesheet">
 <link href="bubble.css" rel="stylesheet">
 <style>
-  /* The app's settings window, in three tabs. Look: every bubble, card and layout running live, the ones in use
-     outlined (clicking one uses it), with the size, the tokens counted and the window's options. Machines: the fleet.
-     General: login, updates, where the pages and stats come from. The app is told what was picked or asked for through
-     `pick` ({ kind, key }; kind "do" for an action), and tells the page its whole state through window.settings.set.
-     In a browser it only previews the Look tab. ?mode=widget|bubble&b=<bubble>&card=<card>&layout=<layout>
-     &kinds=<in,cr,cw,out>&scene=<place>&tab=look|machines|general says what is in use. */
-  :root { --accent: #e2502b; }
+  /* The app's settings window, in three tabs. Bubble: a live preview with your tokens, how it sits on the screen,
+     the tokens counted, which bubble, and what it opens into (a card or a layout, all running live; click one to use
+     it). Machines: this Mac and the others whose agents it shows, the only place other machines come up. General:
+     login, updates, and the advanced options folded away. The page tells the app what was picked or asked for through
+     `pick` ({ kind, key }; kind "do" for an action), and the app tells it its whole state through window.settings.set.
+     ?b=<bubble>&open=<card:key|layout>&kinds=<in,cr,cw,out>&scene=<place>&tab=bubble|machines|general say what is in
+     use. In a browser it runs on made-up state: ?demo=fresh (no other machines yet), ?demo=problem, ?welcome (the
+     first launch), ?relay=demo (made-up agents). */
+  :root { --accent: #e2502b; --line: rgb(255 255 255 / .06); }
   body { margin: 0; color: #e8e8e8; font: 400 .8125rem/1.45 "Schibsted Grotesk", system-ui, sans-serif; background: #141414;
     -webkit-user-select: none; user-select: none; }
   header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 1.2rem; padding: 2.4rem 1.75rem .9rem;
-    background: #141414; box-shadow: 0 1px 0 rgb(255 255 255 / .06); }
+    background: #141414; box-shadow: 0 1px 0 var(--line); }
   h1 { margin: 0; font-size: 1rem; font-weight: 500; }
-  main { display: none; padding-bottom: 1.5rem; }
+  main { display: none; max-width: 760px; padding: .4rem 0 2rem; }
   main.on { display: block; }
-  .rows { padding: .6rem 0 .4rem; }
-  .row { display: flex; align-items: center; gap: 1rem; padding: .4rem 1.75rem; min-height: 1.9rem; }
-  .row > b { flex: 0 0 8.5rem; font-weight: 400; color: #9a9a9a; }
-  .row .hint { color: #6f6f6f; }
-  .row code, .item code { font: .75rem "Geist Mono", ui-monospace, monospace; color: #bdbdbd; }
+  h2 { margin: 0; padding: 1.4rem 1.75rem .45rem; font-size: .875rem; font-weight: 500; }
+  h2 small { font-size: .8125rem; font-weight: 400; color: #8a8a8a; margin-left: .4rem; }
+  .lead { margin: .9rem 1.75rem 0; color: #a8a8a8; max-width: 38rem; }
+  /* A group of settings: rows in a box, as System Settings has them. */
+  .group { margin: 0 1.75rem; border-radius: 10px; background: #1b1b1b; box-shadow: inset 0 0 0 1px var(--line); }
+  .row { display: flex; align-items: center; gap: 1rem; padding: .55rem .9rem; min-height: 2rem; }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row > b { flex: 1; font-weight: 400; }
+  .row > b small { display: block; color: #7f7f7f; font-size: .75rem; }
+  .row code { font: .75rem "Geist Mono", ui-monospace, monospace; color: #bdbdbd; }
+  .hint { color: #7f7f7f; }
   .btn { font: inherit; color: #e8e8e8; background: #2a2a2a; border: 0; padding: .3rem .85rem; border-radius: 6px; cursor: pointer;
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / .08); white-space: nowrap; }
   .btn:hover { background: #333; }
   .btn.primary { background: #3a2a25; box-shadow: inset 0 0 0 1px var(--accent); }
+  .btn.link { background: none; box-shadow: none; padding: .3rem 0; color: #bdbdbd; }
+  .btn.link:hover { color: #fff; }
   .btn:disabled { opacity: .45; cursor: default; }
   .switch { position: relative; width: 2.1rem; height: 1.2rem; padding: 0; border: 0; border-radius: 999px; background: #3a3a3a; cursor: pointer; flex: none; }
   .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: calc(1.2rem - 4px); height: calc(1.2rem - 4px); border-radius: 50%;
     background: #d8d8d8; transition: transform .15s ease; }
   .switch.on { background: var(--accent); }
   .switch.on::after { transform: translateX(.9rem); background: #fff; }
-  .list { margin: .5rem 1.75rem; border-radius: 10px; background: #1b1b1b; box-shadow: inset 0 0 0 1px rgb(255 255 255 / .05); overflow: hidden; }
-  .item { display: flex; align-items: center; gap: .7rem; padding: .6rem .9rem; }
-  .item + .item { border-top: 1px solid rgb(255 255 255 / .05); }
-  .item .name { flex: none; }
-  .item .meta { flex: 1; color: #7a7a7a; }
-  .item .tag { color: #7a7a7a; }
-  .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #4a4a4a; }
-  .dot.online { background: #3ec26b; }
-  .dot.removed { background: #e2502b; }
-  .problem { display: flex; align-items: center; gap: 1rem; margin: .8rem 1.75rem 0; padding: .7rem .9rem; border-radius: 10px;
-    background: #2a1d17; box-shadow: inset 0 0 0 1px rgb(226 80 43 / .5); }
-  .problem span { flex: 1; }
-  .actions { display: flex; gap: .6rem; padding: .5rem 1.75rem; }
-  .note { margin: 1rem 1.75rem; color: #8a8a8a; }
-  .seg { display: inline-flex; padding: 2px; border-radius: 8px; background: #232323; box-shadow: inset 0 0 0 1px rgb(255 255 255 / .06); }
-  .seg button { font: inherit; color: #bdbdbd; background: none; border: 0; padding: .3rem .9rem; border-radius: 6px; cursor: pointer; }
+  .seg { display: inline-flex; padding: 2px; border-radius: 8px; background: #232323; box-shadow: inset 0 0 0 1px var(--line); flex: none; }
+  .seg button { font: inherit; color: #bdbdbd; background: none; border: 0; padding: .28rem .85rem; border-radius: 6px; cursor: pointer; }
   .seg button.on { color: #fff; background: #3a3a3a; }
   select { font: inherit; color: #e8e8e8; background: #2a2a2a; border: 0; padding: .3rem .6rem; border-radius: 6px; cursor: pointer;
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / .08); }
-  .kinds { display: inline-flex; align-items: center; gap: .35rem; color: #8a8a8a; }
-  .kinds button { font: inherit; color: #9a9a9a; background: #1d1d1d; border: 0; padding: .25rem .6rem; border-radius: 999px; cursor: pointer;
+  .kinds { display: inline-flex; gap: .35rem; flex-wrap: wrap; }
+  .kinds button { font: inherit; color: #9a9a9a; background: #1d1d1d; border: 0; padding: .22rem .6rem; border-radius: 999px; cursor: pointer;
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / .08); }
   .kinds button.on { color: #fff; background: #3a2a25; box-shadow: inset 0 0 0 1px var(--accent); }
-  h2 { margin: 0; padding: 1.1rem 1.75rem .15rem; font-size: .875rem; font-weight: 500; }
-  h2 + p { margin: 0 1.75rem; color: #8a8a8a; }
-  h3 { margin: 0; padding: .9rem 1.75rem 0; font-size: .75rem; font-weight: 500; color: #9a9a9a; text-transform: uppercase; letter-spacing: .04em; }
+  /* The galleries: everything running live, the one in use outlined. */
+  h3 { margin: 0; padding: 1rem 1.75rem 0; font-size: .75rem; font-weight: 500; color: #8a8a8a; text-transform: uppercase; letter-spacing: .04em;
+    display: flex; align-items: center; gap: .8rem; }
+  h3 select { text-transform: none; letter-spacing: 0; font-weight: 400; }
   .grid { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .9rem; padding: .7rem 1.75rem .4rem; }
   .tile { display: flex; flex-direction: column; align-items: center; gap: .4rem; padding: 8px; border: 0; border-radius: 12px;
-    background: #1b1b1b; color: inherit; font: inherit; cursor: pointer; box-shadow: inset 0 0 0 1px rgb(255 255 255 / .05);
-    transition: box-shadow .15s ease, background .15s ease; }
+    background: #1b1b1b; color: inherit; font: inherit; cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
   .tile:hover { background: #222; box-shadow: inset 0 0 0 1px rgb(255 255 255 / .14); }
   .tile.on { box-shadow: inset 0 0 0 2px var(--accent); background: #211a18; }
   .tile span { color: #cfcfcf; }
-  .tile.on span { color: #fff; }
-  .tile span i { font-style: normal; color: var(--accent); }
   .pv { position: relative; pointer-events: none; overflow: hidden; text-align: left; }
   .pv > .in { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
   .field { padding: 10px; border-radius: 12px; background: #0e0e0e; box-shadow: 0 0 0 1px rgb(255 255 255 / .06); }
-  body.widget .bubble-only { display: none; }
-  body.bubble .widget-only { display: none; }
-  footer { padding: 1.2rem 1.75rem 1.75rem; color: #6f6f6f; }
+  .stage { display: flex; align-items: flex-end; gap: 1.2rem; flex-wrap: wrap; margin: 1rem 1.75rem 0; padding: 1.2rem; border-radius: 14px;
+    background: radial-gradient(120% 140% at 0% 0%, #2a2420, #161616 60%); box-shadow: inset 0 0 0 1px var(--line); }
+  .stage p { flex-basis: 100%; margin: 0; color: #8a8a8a; }
+  #preview { display: flex; align-items: flex-end; gap: 1rem; }
+  .ball-in { position: relative; width: 84px; height: 84px; flex: none; }
+  .field .card { padding: 0; }
+  /* Machines. */
+  .list .row { gap: .75rem; }
+  .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #4a4a4a; }
+  .dot.on { background: #3ec26b; }
+  .dot.off { background: #e2502b; }
+  .meta { color: #7f7f7f; }
+  .empty { padding: .9rem; color: #7f7f7f; }
+  .ways { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; margin: 0 1.75rem; }
+  .way { padding: .9rem 1rem 1rem; border-radius: 10px; background: #1b1b1b; box-shadow: inset 0 0 0 1px var(--line); }
+  .way b { display: block; font-weight: 500; margin-bottom: .2rem; }
+  .way p { margin: 0 0 .8rem; color: #8f8f8f; }
+  .found { display: flex; align-items: center; gap: .9rem; margin: .8rem 1.75rem 0; padding: .7rem .9rem; border-radius: 10px; background: #18211b;
+    box-shadow: inset 0 0 0 1px rgb(62 194 107 / .35); }
+  .found span { flex: 1; }
+  .problem { display: flex; align-items: center; gap: 1rem; margin: .9rem 1.75rem 0; padding: .7rem .9rem; border-radius: 10px;
+    background: #2a1d17; box-shadow: inset 0 0 0 1px rgb(226 80 43 / .5); }
+  .problem span { flex: 1; }
+  .welcome { display: flex; gap: 1rem; align-items: center; margin: 1rem 1.75rem 0; padding: .9rem 1rem; border-radius: 12px; background: #211a18;
+    box-shadow: inset 0 0 0 1px rgb(226 80 43 / .45); }
+  .welcome div { flex: 1; }
+  .welcome b { display: block; font-weight: 500; }
+  .welcome span { color: #b8a8a2; }
+  details > summary { list-style: none; cursor: pointer; padding: 1.4rem 1.75rem .45rem; font-size: .875rem; font-weight: 500; }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before { content: "▸"; display: inline-block; width: 1rem; color: #8a8a8a; transition: transform .15s; }
+  details[open] > summary::before { transform: rotate(90deg); }
+  footer { padding: 1.2rem 1.75rem 0; color: #6f6f6f; }
 </style>
 </head>
 <body>
@@ -86,52 +110,71 @@
   import { setKinds } from './flow.js';
   import { PLACES, placeOf, setScene } from './scene.js';
   const q = new URLSearchParams(location.search);
-  const state = { mode: q.get('mode') === 'widget' ? 'widget' : 'bubble', b: q.get('b') || 'orb', card: q.get('card') || 'classic', layout: q.get('layout') || 'haul',
-    kinds: (q.get('kinds') || 'in,cr,cw,out').split(','), scene: q.get('scene') || 'auto', tab: q.get('tab') || 'look',
-    zoom: 0, zooms: ['Small', 'Medium', 'Large'], desktop: false, glass: true, clickThrough: true };
-  const KINDS = [['in', 'Input'], ['cr', 'Cache read'], ['cw', 'Cache write'], ['out', 'Output']];
-  const PAIR = { classic: 'orb', speed: 'tach', agents: 'quake' };      // the bubble each card shows on
-  const GROUPS = [['With the trucks', m => m.trucks], ['Throughput', m => m.flow && !m.trucks], ['Machines', m => !m.trucks && !m.flow]];
-  const TABS = [['look', 'Look'], ['machines', 'Machines'], ['general', 'General']];
   const app = !!window.webkit?.messageHandlers?.pick;
+  const KINDS = [['in', 'Input'], ['cr', 'Cache read'], ['cw', 'Cache write'], ['out', 'Output']];
+  const GROUPS = [['With the trucks', m => m.trucks], ['Throughput', m => m.flow && !m.trucks], ['Machines', m => !m.trucks && !m.flow]];
+  const TABS = [['bubble', 'Bubble'], ['machines', 'Machines'], ['general', 'General']];
+  // What the app would say, for looking at it in a browser.
+  const demo = q.get('demo') || '', others = demo === 'fresh' ? [] : [
+    { machine: 'mac-mini', name: 'Mac mini', online: true, kind: 'Mac', replica: true, version: '0.7.1' },
+    { machine: 'build-box', name: 'build-box', online: false, kind: 'Linux', replica: false, version: '0.7.1' },
+  ];
+  const state = {
+    b: q.get('b') || 'globe', open: q.get('open') || 'haul',
+    kinds: (q.get('kinds') || 'in,cr,cw,out').split(','), scene: q.get('scene') || 'auto', tab: q.get('tab') || 'bubble',
+    zoom: 0, zooms: ['Small', 'Medium', 'Large'], desktop: false,
+    welcome: q.has('welcome'), login: true, autoUpdates: true, updates: true, version: '',
+    site: 0, sites: ['Built in', 'Local copy (localhost:8765)'], relay: '', source: 'This Mac’s hub, live',
+    stats: app ? null : {
+      running: demo !== 'problem', version: '0.7.1', self: 'This Mac', dashboard: true,
+      problems: demo === 'problem' ? [{ text: 'agent-stats is stopped: Tokiscope isn’t counting this Mac’s agents.', button: 'Start It', do: 'start' }] : [],
+      requests: demo === 'fresh' ? [] : [{ id: 'r1', who: 'MacBook Pro', digits: '48 21' }],
+      machines: others, found: demo === 'fresh' ? [{ name: 'Studio', node: 'mac-studio', url: 'http://mac-studio:7777' }] : [],
+    },
+  };
   const send = (kind, key = '') => window.webkit?.messageHandlers?.pick?.postMessage({ kind, key: String(key) });
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const tile = (kind, key, name, w, h) => `<button class="tile" data-kind="${kind}" data-key="${key}"><div class="pv" style="width:${w}px;height:${h}px"><div class="in"></div></div><span>${name}</span></button>`;
   const seg = (set, items) => `<div class="seg">${items.map(([key, name]) => `<button data-set="${set}" data-key="${key}">${name}</button>`).join('')}</div>`;
   const toggle = flag => `<button class="switch" data-flag="${flag}" aria-label="${flag}"></button>`;
-  document.body.innerHTML = `<header><h1>Tokiscope</h1>${app ? `<div class="seg tabs">${TABS.map(([k, name]) => `<button data-tab="${k}">${name}</button>`).join('')}</div>` : ''}</header>
-    <main data-tab="look">
-      <div class="rows">
-        <div class="row"><b>Show as</b>${seg('mode', [['widget', 'Widget'], ['bubble', 'Bubble']])}</div>
-        <div class="row"><b>Size</b><span id="zooms"></span></div>
-        <div class="row"><b>Count</b><div class="kinds">${KINDS.map(([k, name]) => `<button data-k="${k}">${name}</button>`).join('')}</div></div>
-        <div class="row"><b>Backdrop</b><select id="scene"><option value="auto">Where you are: ${esc(placeOf().name)}</option>
-          ${Object.values(PLACES).sort((a, b) => a.name.localeCompare(b.name)).map(c => `<option value="${c.key}">${esc(c.name)}</option>`).join('')}
-          <option value="off">None</option></select><span class="hint">Landmarks of your time zone behind the trucks, under the sky there now.</span></div>
-        <div class="row"><b>Sits</b>${seg('desktop', [['0', 'Above windows'], ['1', 'On the desktop']])}</div>
-        <div class="row widget-only"><b>Dark glass</b>${toggle('glass')}<span class="hint">A dark background behind the layout.</span></div>
-        <div class="row widget-only"><b>Click through</b>${toggle('clickThrough')}<span class="hint">Clicks go to what's under the widget; hold ⌃ and click it for its menu.</span></div>
+  const tile = (kind, key, name, w, h) => `<button class="tile" data-kind="${kind}" data-key="${key}"><div class="pv" style="width:${w}px;height:${h}px"><div class="in"></div></div><span>${name}</span></button>`;
+  const row = (label, control, hint = '') => `<div class="row"><b>${label}${hint ? `<small>${hint}</small>` : ''}</b>${control}</div>`;
+  const backdrop = `<select class="scene"><option value="auto">Where you are: ${esc(placeOf().name)}</option>
+    ${Object.values(PLACES).sort((a, b) => a.name.localeCompare(b.name)).map(c => `<option value="${c.key}">${esc(c.name)}</option>`).join('')}
+    <option value="off">None</option></select>`;
+  // What the bubble opens into: one of the cards (they were what showed on hover), or one of the layouts.
+  const opens = () => `<h3>Cards</h3><div class="grid">${Object.entries(CARDS).map(([k, c]) => tile('open', 'card:' + k, c.name, 228, 196)).join('')}</div>`
+    + GROUPS.map(([title, of]) => `<h3>${title}${title === 'With the trucks' ? `<span class="hint" style="font-size:.75rem">Backdrop</span>${backdrop}` : ''}</h3>
+    <div class="grid">${Object.entries(MACHINES).filter(([, m]) => of(m)).map(([k, m]) => tile('open', k, m.name, 0, 0)).join('')}</div>`).join('');
+
+  document.body.innerHTML = `<header><h1>Tokiscope</h1><div class="seg tabs">${TABS.map(([k, name]) => `<button data-tab="${k}">${name}</button>`).join('')}</div></header>
+    <main data-tab="bubble">
+      <div id="welcome"></div>
+      <div class="stage"><div id="preview"></div><p>Live, with your tokens: the bubble, and what it opens into when you click it.</p></div>
+      <h2>On the screen</h2>
+      <div class="group">
+        ${row('Size', `<span id="zooms"></span>`)}
+        ${row('Sits', seg('desktop', [['0', 'Above windows'], ['1', 'On the desktop']]))}
       </div>
-      <section class="bubble-only"><h2>Bubble</h2><p>What floats in the corner. All live: click one to use it.</p>
-        <div class="grid">${Object.entries(BUBBLES).map(([k, b]) => tile('bubble', k, b.name, 84, 84)).join('')}</div></section>
-      <section class="bubble-only"><h2>Card on hover</h2><p>What shows beside the bubble while the pointer is over it.</p>
-        <div class="grid">${Object.entries(CARDS).map(([k, c]) => tile('card', k, c.name, 275, 240)).join('')}</div></section>
-      <section><h2 id="lt"></h2><p id="lp"></p>
-        ${GROUPS.map(([title, of]) => `<h3>${title}</h3><div class="grid">${Object.entries(MACHINES).filter(([, m]) => of(m))
-          .map(([k, m]) => tile('layout', k, m.name, 0, 0)).join('')}</div>`).join('')}</section>
-      <footer>Everything shows only the tokens counted: the trucks and their squares, the figures, rates, meters and traces.</footer>
+      <h2>Tokens counted <small>everything shows only these: the trucks and their squares, figures, rates and traces</small></h2>
+      <div class="group">${row('Count', `<div class="kinds">${KINDS.map(([k, name]) => `<button data-k="${k}">${name}</button>`).join('')}</div>`)}</div>
+      <h2>Bubble <small>all live: click one to use it</small></h2>
+      <div class="grid">${Object.entries(BUBBLES).map(([k, b]) => tile('bubble', k, b.name, 84, 84)).join('')}</div>
+      <h2>Opens into <small>when you click the bubble</small></h2>${opens()}
     </main>
     <main data-tab="machines"></main>
     <main data-tab="general"></main>`;
+  for (const s of document.querySelectorAll('.scene')) s.addEventListener('change', e => pick('scene', e.target.value));
 
-  // The bubbles alone, the cards held open on the bubble each goes with (at 0.8), the layouts as they show (scaled to fit).
-  for (const el of document.querySelectorAll('[data-kind=bubble] .in')) { el.style.cssText += 'width:84px;height:84px'; bubble(el, { style: el.closest('.tile').dataset.key, art: null }); }
-  for (const el of document.querySelectorAll('[data-kind=card] .in')) {
-    el.style.cssText += 'width:344px;height:300px;transform:scale(.8)';
-    const k = el.closest('.tile').dataset.key;
-    bubble(el, { style: PAIR[k], card: k, art: null, pin: 'card' });
+  // The previews, live: bubbles alone, cards and layouts as they open (layouts scaled to fit).
+  for (const el of document.querySelectorAll('[data-kind=bubble] .in')) { el.style.cssText += 'width:84px;height:84px'; bubble(el, { style: el.closest('.tile').dataset.key, open: null }); }
+  const cardIn = (el, k) => { el.innerHTML = '<div class="field"><div class="card"></div></div>'; const m = CARDS[k].make(el.querySelector('.card')); return m ? run([], [m]) : () => {}; };
+  // Cards grow as they fill: each tile follows its card's size.
+  for (const el of document.querySelectorAll('[data-key^="card:"] .in')) {
+    el.style.cssText += 'transform:scale(.82)';
+    cardIn(el, el.closest('.tile').dataset.key.slice(5));
+    new ResizeObserver(() => Object.assign(el.parentElement.style, { width: Math.round(el.offsetWidth * 0.82) + 'px', height: Math.round(el.offsetHeight * 0.82) + 'px' })).observe(el);
   }
-  const fields = [...document.querySelectorAll('[data-kind=layout] .in')];
+  const fields = [...document.querySelectorAll('[data-kind=open]:not([data-key^="card:"]) .in')];
   for (const el of fields) el.innerHTML = '<div class="field"><div></div></div>';
   const fit = () => {
     for (const el of fields) {
@@ -142,98 +185,118 @@
   };
   run(fields.map(el => [el.querySelector('.field > div'), el.closest('.tile').dataset.key]), [], fit);
   fit();
+  // The one in use, large: the bubble beside what it opens into (the last preview stops when it's replaced).
+  let previewed = '', stopPreview = () => {};
+  const preview = () => {
+    if (previewed === state.b + state.open || !BUBBLES[state.b]) return;
+    previewed = state.b + state.open;
+    stopPreview();
+    const el = document.getElementById('preview');
+    el.innerHTML = '<div class="ball-in"></div><div class="open-in"></div>';
+    const b = bubble(el.firstElementChild, { style: state.b, open: null }), o = el.lastElementChild;
+    let stopOpen = () => {};
+    if (state.open.startsWith('card:') && CARDS[state.open.slice(5)]) stopOpen = cardIn(o, state.open.slice(5));
+    else if (MACHINES[state.open]) { o.innerHTML = '<div class="field"><div></div></div>'; stopOpen = run([[o.querySelector('.field > div'), state.open]]); }
+    stopPreview = () => { b.stop(); stopOpen(); };
+  };
 
-  // The fleet, from the app: what needs doing, join requests, the machines, adding one.
+  // First launch: Tokiscope is already counting here; nothing to set up.
+  const welcome = s => !s.welcome ? '' : `<div class="welcome"><div><b>Tokiscope is counting your agents on this Mac.</b>
+    <span>Pick how it shows below. Use other machines too? Add them in Machines, whenever you like.</span></div>
+    <button class="btn primary" data-do="welcomeDone">Got It</button></div>`;
+
+  // Machines: this Mac, the others, adding one. The fleet is never named; it is just "your machines".
   const machines = st => {
-    if (!st) return `<p class="note">agent-stats isn't part of this copy of Tokiscope.</p>`;
+    if (!st) return `<p class="lead">agent-stats isn’t part of this copy of Tokiscope.</p>`;
     const off = st.busy ? ' disabled' : '';
-    let h = st.busy ? `<p class="note">${esc(st.busy)}</p>` : '';
+    let h = `<p class="lead">Tokiscope counts the agents on this Mac. Add your other machines to see theirs here too: each Mac with Tokiscope keeps the stats of all of them, so any one of them can be off.</p>`;
+    if (st.busy) h += `<p class="lead">${esc(st.busy)}</p>`;
     for (const p of st.problems || []) h += `<div class="problem"><span>${esc(p.text)}</span><button class="btn primary" data-do="${p.do}"${off}>${esc(p.button)}</button></div>`;
     if (st.canSetUp) {
-      return h + `<h2>Set up this Mac</h2><p>Join your fleet, or start one, so this Mac counts its agents and keeps everyone's stats.</p>
-        <div class="actions"><button class="btn primary" data-do="setUp"${off}>Set Up This Mac…</button></div>`;
+      return h + `<h2>This Mac</h2><div class="group list"><div class="row"><span class="dot off"></span><b>Not counting yet<small>Tokiscope runs agent-stats on this Mac to count its agents.</small></b>
+        <button class="btn primary" data-do="setUp"${off}>Start Counting</button></div></div>`;
     }
+    for (const f of st.found || []) h += `<div class="found"><span>Tokiscope already keeps your stats on <b>${esc(f.node)}</b>. Join it, so both show all your machines?</span><button class="btn primary" data-join="${esc(f.url)}"${off}>Join…</button></div>`;
     if (st.requests?.length) {
-      h += `<h2>Asking to join</h2><p>Approve only a machine you set up yourself, after checking it shows the same code.</p><div class="list">${st.requests.map(r =>
-        `<div class="item"><span class="name">${esc(r.who)}</span><span class="meta">code <code>${esc(r.digits)}</code></span><button class="btn primary" data-request="${esc(r.id)}"${off}>Review…</button></div>`).join('')}</div>`;
+      h += `<h2>Asking to join</h2><div class="group list">${st.requests.map(r => `<div class="row"><b>${esc(r.who)}<small>Shows ${esc(r.digits)}: approve only if it’s yours and shows the same.</small></b><button class="btn primary" data-request="${esc(r.id)}"${off}>Review…</button></div>`).join('')}</div>`;
     }
-    h += `<h2>Machines</h2><p>Every Mac with Tokiscope keeps the whole fleet's stats; other machines report to them.</p>`;
+    h += `<h2>This Mac</h2><div class="group list"><div class="row"><span class="dot ${st.running ? 'on' : 'off'}"></span>
+      <b>${esc(st.self)}<small>${st.running ? 'Counting its agents' : 'Not counting'}${st.version ? ` · agent-stats ${esc(st.version)}` : ''}</small></b>
+      ${st.dashboard ? '<button class="btn" data-do="dashboard">Open Dashboard</button>' : ''}</div></div>`;
     if (st.machines) {
-      h += st.machines.length ? `<div class="list">${st.machines.map(m => `<div class="item">
-          <span class="dot ${m.revoked ? 'removed' : m.online ? 'online' : ''}"></span>
-          <span class="name">${esc(m.name)}${m.self ? ' <span class="tag">(this Mac)</span>' : ''}</span>
-          <span class="meta">${m.revoked ? 'Removed' : `${m.online ? 'Online' : 'Offline'} · ${m.replica ? 'keeps the stats' : 'reports'}${m.version ? ` · agent-stats ${esc(m.version)}` : ''}`}</span>
-          ${!m.revoked && !m.self ? `<button class="btn" data-remove="${esc(m.machine)}"${off}>Remove…</button>` : ''}</div>`).join('')}</div>`
-        : `<p class="note">Looking…</p>`;
+      h += `<h2>Other machines</h2><div class="group list">${st.machines.length ? st.machines.map(m => `<div class="row"><span class="dot ${m.revoked ? 'off' : m.online ? 'on' : ''}"></span>
+        <b>${esc(m.name)}<small>${m.revoked ? 'Removed' : [m.online ? 'Online' : 'Offline', m.kind, m.replica ? 'keeps the stats too' : 'reports its agents', m.version && `agent-stats ${m.version}`].filter(Boolean).map(esc).join(' · ')}</small></b>
+        ${m.revoked ? '' : `<button class="btn" data-remove="${esc(m.machine)}"${off}>Remove…</button>`}</div>`).join('') : '<div class="empty">None yet.</div>'}</div>`;
     }
-    h += `<div class="actions"><button class="btn primary" data-do="addMachine"${off}>Add Machine…</button>${st.dashboard ? `<button class="btn" data-do="dashboard">${esc(st.dashboard)}</button>` : ''}</div>`;
-    return h + `<footer>${esc(st.summary)}</footer>`;
+    h += `<h2>Add a machine</h2><div class="ways">
+      <div class="way"><b>Add one from this Mac</b><p>Another Mac, a Linux machine or a server you reach over SSH: Tokiscope installs agent-stats there and adds it.</p>
+        <button class="btn primary" data-do="addMachine"${off}>Add a Machine…</button></div>
+      <div class="way"><b>Or join another Mac</b><p>Tokiscope already counts on another Mac? Join that one instead: this Mac’s stats go with it.</p>
+        <button class="btn" data-do="join"${off}>Join Another Mac…</button></div></div>`;
+    return h;
   };
-  const general = s => `<div class="rows">
-      <div class="row"><b>Open at login</b><button class="switch${s.login ? ' on' : ''}" data-do="login" aria-label="Open at login"></button></div>
-      <div class="row"><b>Updates</b>${s.updates ? '<button class="btn" data-do="updates">Check for Updates…</button>' : '<span class="hint">This build doesn\'t update itself.</span>'}
-        ${s.version ? `<span class="hint">Tokiscope ${esc(s.version)}</span>` : ''}</div>
+  const general = s => `<h2>Startup</h2><div class="group">${row('Open at login', `<button class="switch${s.login ? ' on' : ''}" data-do="login" aria-label="Open at login"></button>`)}</div>
+    <h2>Updates</h2><div class="group">
+      ${s.updates ? row('Check automatically', `<button class="switch${s.autoUpdates ? ' on' : ''}" data-do="autoUpdates" aria-label="Check automatically"></button>`, 'Tokiscope and agent-stats update together.') : ''}
+      ${row(`Tokiscope ${esc(s.version)}`, s.updates ? '<button class="btn" data-do="updates">Check Now</button>' : '<span class="hint">This build doesn’t update itself.</span>')}
     </div>
-    <h2>Advanced</h2><p>Where the pages and the stats come from.</p>
-    <div class="rows">
-      <div class="row"><b>Pages from</b>${seg('site', (s.sites || []).map((name, i) => [i, esc(name)]))}</div>
-      <div class="row"><b>Page</b>${s.pageURL ? `<code>${esc(s.pageURL)}</code>` : '<span class="hint">The layout</span>'}<button class="btn" data-do="pageURL">Other Page URL…</button></div>
-      <div class="row"><b>Stats relay</b>${s.relay ? `<code>${esc(s.relay)}</code>` : '<span class="hint">None</span>'}<button class="btn" data-do="relay">Change…</button></div>
-      <div class="row"><b>Stats</b><span class="hint">${esc(s.source)}</span></div>
-      <div class="row"><b></b><button class="btn" data-do="reload">Reload the Widget</button></div>
-    </div>`;
+    <details${shownAdvanced ? ' open' : ''}><summary>Advanced</summary>
+      <div class="group">
+        ${s.stats && !s.stats.canSetUp ? row('agent-stats', s.stats.running ? '<button class="btn" data-do="stop">Stop</button>' : '<button class="btn primary" data-do="start">Start</button>', s.stats.running ? 'Running on this Mac: it counts the agents and keeps the stats.' : 'Stopped: nothing is counted on this Mac.') : ''}
+        ${row('Stats', `<span class="hint">${esc(s.source)}</span>`)}
+        ${row('Stats relay', `${s.relay ? `<code>${esc(s.relay)}</code>` : '<span class="hint">None</span>'}<button class="btn" data-do="relay">Change…</button>`, 'Read the stats from a relay when no hub answers.')}
+        ${row('Pages from', seg('site', (s.sites || []).map((name, i) => [i, esc(name)])))}
+        ${row('', '<button class="btn" data-do="reload">Reload the Bubble</button>')}
+      </div></details>`;
+  let shownAdvanced = q.has('advanced');
 
-  // What is in use, from the app.
-  let shown = {};                                        // the HTML last put in, to rebuild only what changed
-  const key = v => v === true ? '1' : v === false ? '0' : String(v);   // a setting as its buttons' data-key
+  let shown = {};
+  const key = v => v === true ? '1' : v === false ? '0' : String(v);
   window.settings = {
     set(s) {
       Object.assign(state, s);
-      document.body.className = state.mode;
       for (const m of document.querySelectorAll('main')) m.classList.toggle('on', m.dataset.tab === state.tab);
       for (const b of document.querySelectorAll('[data-tab]')) if (b.tagName === 'BUTTON') b.classList.toggle('on', b.dataset.tab === state.tab);
       const z = seg('zoom', state.zooms.map((name, i) => [i, name]));
       if (z !== shown.z) document.getElementById('zooms').innerHTML = shown.z = z;
+      const w = welcome(state);
+      if (w !== shown.w) document.getElementById('welcome').innerHTML = shown.w = w;
+      const m = machines(state.stats), g = general(state);
+      if (m !== shown.m) document.querySelector('main[data-tab=machines]').innerHTML = shown.m = m;
+      if (g !== shown.g) document.querySelector('main[data-tab=general]').innerHTML = shown.g = g;
       for (const b of document.querySelectorAll('[data-set]')) b.classList.toggle('on', key(state[b.dataset.set]) === b.dataset.key);
       for (const b of document.querySelectorAll('[data-flag]')) b.classList.toggle('on', !!state[b.dataset.flag]);
       for (const b of document.querySelectorAll('.kinds button')) b.classList.toggle('on', state.kinds.includes(b.dataset.k));
+      for (const t of document.querySelectorAll('.tile')) t.classList.toggle('on', state[{ bubble: 'b', open: 'open' }[t.dataset.kind]] === t.dataset.key);
+      preview();
+      for (const el of document.querySelectorAll('.scene')) el.value = state.scene;
       if (s.kinds) setKinds(state.kinds);
-      if (s.scene) { setScene(state.scene); document.getElementById('scene').value = state.scene; }
-      for (const t of document.querySelectorAll('.tile')) t.classList.toggle('on', state[{ bubble: 'b', card: 'card', layout: 'layout' }[t.dataset.kind]] === t.dataset.key);
-      document.getElementById('lt').textContent = state.mode === 'bubble' ? 'Opens on click' : 'Layout';
-      document.getElementById('lp').textContent = state.mode === 'bubble' ? 'What the bubble opens into when clicked.' : 'What sits on the desktop. All live: click one to use it.';
-      // The other tabs are rebuilt only when what they show changed (a rebuild under the pointer would lose a hover).
-      const m = machines(state.stats), g = general(state);
-      if (m !== shown.m) document.querySelector('main[data-tab=machines]').innerHTML = shown.m = m;
-      if (g !== shown.g) { document.querySelector('main[data-tab=general]').innerHTML = shown.g = g; window.settings.set({}); }
+      if (s.scene) setScene(state.scene);
     },
   };
-  const pick = (kind, key) => {
-    send(kind, key);
-    window.settings.set(kind === 'mode' ? { mode: key } : kind === 'bubble' ? { b: key, mode: 'bubble' } : { [kind]: key });
-  };
+  const pick = (kind, key) => { send(kind, key); window.settings.set(kind === 'bubble' ? { b: key } : { [kind]: key }); };
+  document.addEventListener('toggle', e => { if (e.target.tagName === 'DETAILS') shownAdvanced = e.target.open; }, true);
   document.addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b || b.disabled) return;
     const d = b.dataset;
-    if (d.tab) window.settings.set({ tab: d.tab });
+    if (d.tab) { window.settings.set({ tab: d.tab }); send('tab', d.tab); }
     else if (d.set) pick(d.set, d.key);
     else if (d.flag) { const on = !state[d.flag]; send(d.flag, on ? 1 : 0); window.settings.set({ [d.flag]: on }); }
-    else if (d.do) send('do', d.do);
+    else if (d.do) { send('do', d.do); if (!app && d.do === 'welcomeDone') window.settings.set({ welcome: false }); }
     else if (d.remove) send('remove', d.remove);
+    else if (d.join) send('join', d.join);
     else if (d.request) send('request', d.request);
     else if (d.kind) pick(d.kind, d.key);
     else if (d.k) {
-      // The tokens counted: any of the four, never none.
       const k = d.k, on = state.kinds.includes(k), next = KINDS.map(([x]) => x).filter(x => x === k ? !on : state.kinds.includes(x));
       if (!next.length) return;
       send('kinds', next.join());
       window.settings.set({ kinds: next });
     }
   });
-  document.getElementById('scene').addEventListener('change', e => pick('scene', e.target.value));
-  window.settings.set({ scene: state.scene });
-  send('ready');                                         // the app answers with everything else
+  window.settings.set({ scene: state.scene, kinds: state.kinds });
+  send('ready');
 </script>
 </body>
 </html>

@@ -865,16 +865,18 @@ export function run(slots, extra = [], onChange = () => {}) {
     return m;
   };
   let built = slots.map(build);
-  projectListeners.push(moved => {
+  const rebuild = moved => {
     built = built.map((m, i) => {
       if (moved && m.reorders) return m;
       for (const c of m.channels) feed.channels.splice(feed.channels.indexOf(c), 1);
       return build(slots[i]);
     });
     onChange();
-  });
-  let last = 0;
+  };
+  projectListeners.push(rebuild);
+  let last = 0, stopped = false;
   const frame = now => {
+    if (stopped) return;
     const dt = Math.min(0.05, (now - (last || now)) / 1000), t = now / 1000; last = now;
     for (const c of feed.channels) while (c.queue.length && c.queue[0].at <= now) c.arrive(c.queue.shift().p);
     for (const m of [...built, ...extra]) { m.step(dt, t); m.draw(t); }
@@ -883,4 +885,10 @@ export function run(slots, extra = [], onChange = () => {}) {
   requestAnimationFrame(frame);
   // Where a stream may push (the app, or a relay the page can open one on), the first poll waits for it a moment.
   if (!polling) { polling = true; stream(); setTimeout(poll, window.webkit?.messageHandlers?.hub || (window.EventSource && /^https?:/.test(RELAY)) ? 2500 : 0); }
+  // Stops them (a preview that was replaced): nothing more is drawn, and their channels count no more.
+  return () => {
+    stopped = true;
+    projectListeners.splice(projectListeners.indexOf(rebuild), 1);
+    for (const m of built) for (const c of m.channels) feed.channels.splice(feed.channels.indexOf(c), 1);
+  };
 }

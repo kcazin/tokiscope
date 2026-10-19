@@ -1,8 +1,9 @@
-// Bubble mode: a small floating bubble that shows one live thing, a card with more on hover, and the field (one of
-// the lab's layouts) on click. Everything is anchored to the bottom right and laid out at its full size, the card and
-// field just invisible, so nothing moves or resizes as they show. In the app (?app=1) the window is told that full
-// size once, and where the visible parts are, so it can let clicks through everywhere else; it passes hover in.
-import { run, feed, channel, MACHINES, PROJECTS, NAMES, SHORT, RGB, SHADES, shade, short, MONO } from './lab.js';
+// The bubble: a small floating bubble that shows one live thing and opens, on click, into a card or one of the lab's
+// layouts. Everything is anchored to the bottom right and laid out at its full size, the opened view just invisible,
+// so nothing moves or resizes as it shows. In the app (?app=1) the window is told that full size once, and where the
+// visible parts are, so it can let clicks through everywhere else; it passes hover in, and hears today at a glance
+// every second for its menu.
+import { run, feed, channel, MACHINES, PROJECTS, NAMES, SHORT, RGB, SHADES, shade, short, MONO, countedWhat } from './lab.js';
 import { flow, onTurn, shownAgents, hd, font, fit, status, STATUS_W, spark, wheels, traces, typist, tachometer, levels, fmt, lg, kickOf, lead, rgba, INK, DIM, FAINT, demo } from './flow.js';
 
 const D = 56;                                                     // the bubble's diameter, CSS px
@@ -193,7 +194,7 @@ const STYLES = {
 };
 export const BUBBLES = STYLES;
 
-// ---- The hover cards --------------------------------------------------------------------------------------------
+// ---- The cards --------------------------------------------------------------------------------------------
 // Each fills the card's element; one that draws every frame returns its step(dt, t) and draw(t).
 function card(el) {
   const ago = ms => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`; };
@@ -203,12 +204,12 @@ function card(el) {
     const states = Object.entries(by).sort((a, b) => b[1] - a[1]).map(([s, n]) => `${n} ${s}`).join(' · ');
     const total = PROJECTS.reduce((n, p) => n + (feed.today[p] || 0), 0), max = Math.max(1, ...PROJECTS.map(p => feed.today[p] || 0));
     const subs = feed.agents.filter(a => a.kind === 'subagent').length;
-    el.innerHTML = `<p class="hd"><b>${feed.stale ? 'Not live' : `${feed.agents.length} agents`}</b>${subs ? ` <span>${subs} of them subagents</span>` : ''}</p>
+    el.innerHTML = `<p class="hd"><b>${feed.stale ? 'Not live' : `${feed.agents.length} agent${feed.agents.length === 1 ? '' : 's'}`}</b>${subs ? ` <span>${subs} of them subagents</span>` : ''}</p>
       <p class="st">${states || 'all quiet'}</p>
       <p class="rt"><b>${short(feed.rate)}</b> tokens/s · <b>${short(total)}</b> today</p>
       <ul>${PROJECTS.map(p => `<li><i style="background:${rgb(p)}"></i><span>${NAMES[p]}</span><em>${short(feed.today[p] || 0)}</em>
         <s style="width:${(feed.today[p] || 0) / max * 100}%;background:${rgb(p, 0.55)}"></s></li>`).join('')}</ul>
-      <p class="ft">${!feed.updated ? 'Connecting…' : `${feed.stale ? 'Not live · ' : feed.live ? 'Live · ' : ''}${ago(Date.now() - feed.updated)}`} · click to open</p>`;
+      <p class="ft">${!feed.updated ? 'Connecting…' : `${feed.stale ? 'Not live · ' : feed.live ? 'Live · ' : ''}${ago(Date.now() - feed.updated)}`}</p>`;
   };
   render(); setInterval(render, 1000);
 }
@@ -239,7 +240,7 @@ function speedCard(el) {
         lv.draw(ctx, p, 80, y - 4, 18, 5, 8);
         font(10, ctx, 'right'); ctx.fillStyle = r >= 1 ? INK : DIM; ctx.fillText(r >= 1 ? fmt(r) : '–', W, y);
       });
-      font(10, ctx); ctx.fillStyle = '#7a7a7a'; ctx.fillText(`${short(flow.total)} ${flow.when} · click to open`, 0, H - 5);
+      font(10, ctx); ctx.fillStyle = '#7a7a7a'; ctx.fillText(`${short(flow.total)} ${flow.when}`, 0, H - 5);
     },
   };
 }
@@ -276,7 +277,6 @@ function agentsCard(el) {
         ctx.fillText(last, W, y + 28);
         font(9, ctx); ctx.fillText(fit(ctx, `${NAMES[g.project] || g.project} · ${g.on ? STATES[g.state] || 'working' : 'idle'}`, W - lw - 8), 0, y + 28);
       });
-      font(10, ctx); ctx.fillStyle = '#7a7a7a'; ctx.fillText('click to open', 0, H - 5);
     },
   };
 }
@@ -287,66 +287,77 @@ export const CARDS = {
 };
 
 // ---- One bubble -------------------------------------------------------------------------------------------------
-// `card`: which hover card; `pin`: 'card' keeps the card showing, 'open' starts with the field open (for the lab).
-export function bubble(root, { style = 'orb', card: cardKey = 'classic', art = 'haul', app = false, pin = null }) {
-  root.insertAdjacentHTML('beforeend', `<div class="bw"><div class="card panel"></div>
-    <div class="shell"><div class="art"></div><span class="ball"></span></div></div>`);
-  const wrap = root.lastElementChild, artEl = wrap.querySelector('.art'), cardEl = wrap.querySelector('.card');
+// `open`: what it opens into on click, one of the cards (`card:<key>`) or of the lab's layouts (null: nothing, for a
+// bubble shown alone); `pin`: 'open' starts it open (for the lab).
+export const isCard = k => typeof k === 'string' && k.startsWith('card:') && !!CARDS[k.slice(5)];
+export function bubble(root, { style = 'orb', open: what = 'haul', app = false, pin = null }) {
+  root.insertAdjacentHTML('beforeend', `<div class="bw"><div class="shell"><div class="art"></div><span class="ball"></span></div></div>`);
+  const wrap = root.lastElementChild, artEl = wrap.querySelector('.art');
   const shell = wrap.querySelector('.shell'), ball = wrap.querySelector('.ball');
   const ctx = disc(ball), view = STYLES[style].make(ctx), ch = channel(5e4, 60);
-  let hovering = pin === 'card', open = pin === 'open';
+  let hovering = false, open = pin === 'open';
   ch.arrive = p => { view.arrive(p, performance.now() / 1000); ch.delivered(p); shell.classList.remove('flash'); void shell.offsetWidth; shell.classList.add('flash'); };
-  const cv = (CARDS[cardKey] || CARDS.classic).make(cardEl);
+  // A card opens in a box of its own; a layout fills the field.
+  let cv = null, layout = null;
+  if (isCard(what)) { artEl.innerHTML = '<div class="card"></div>'; cv = CARDS[what.slice(5)].make(artEl.firstElementChild); }
+  else if (what && MACHINES[what]) layout = what;
   // For the app: the full size the window needs (CSS px from the bottom right), and the parts that take the pointer.
   const msg = (name, body) => window.webkit?.messageHandlers?.[name]?.postMessage(body);
-  // The window holds the bubble with its card beside it, or the opened field, whichever is bigger.
+  // The window holds the bubble, or the opened field, whichever is bigger.
   let lastFrame = '', aw = 56, ah = 56, top = false, left = false;
   const frame = () => {
-    const a = artEl.getBoundingClientRect(), c = cardEl.getBoundingClientRect();
+    const a = artEl.getBoundingClientRect();
     aw = a.width; ah = a.height;
     shell.style.setProperty('--aw', aw + 'px'); shell.style.setProperty('--ah', ah + 'px');
-    const f = { w: Math.ceil(Math.max(c.width + 8 + 56, aw) + 28), h: Math.ceil(Math.max(c.height, 56, ah) + 28), aw, ah, top, left };
+    const f = { w: Math.ceil(Math.max(56, aw) + 28), h: Math.ceil(Math.max(56, ah) + 28), aw, ah, top, left };
     if (JSON.stringify(f) !== lastFrame) { lastFrame = JSON.stringify(f); msg('frame', f); }
   };
   // Where the pointer counts: the bubble's full open size while it is open or opening, so the window takes the click
-  // to close it; otherwise the ball, and the card while it shows. Measured from the corner the bubble is pinned to
-  // (x and y are the gaps to its two edges), which stays put as the window resizes.
+  // to close it; otherwise the ball. Measured from the corner the bubble is pinned to (x and y are the gaps to its two
+  // edges), which stays put as the window resizes.
   const rects = () => {
     const s = shell.getBoundingClientRect();
     const box = (x, y, w, h) => ({ x: (left ? x : innerWidth - x - w) - 4, y: (top ? y : innerHeight - y - h) - 4, w: w + 8, h: h + 8 });
-    const [w, h] = open ? [aw, ah] : [56, 56], list = [box(left ? s.left : s.right - w, top ? s.top : s.bottom - h, w, h)];
-    if (hovering && !open) { const c = cardEl.getBoundingClientRect(); list.push(box(c.left, c.top, c.width, c.height)); }
-    msg('rects', { rects: list, top, left });
+    const [w, h] = open ? [aw, ah] : [56, 56];
+    msg('rects', { rects: [box(left ? s.left : s.right - w, top ? s.top : s.bottom - h, w, h)], top, left });
   };
   new ResizeObserver(() => { frame(); rects(); }).observe(artEl);
-  new ResizeObserver(frame).observe(cardEl);
   addEventListener('resize', rects);
-  const update = () => {
-    cardEl.classList.toggle('in', hovering && !open); shell.classList.toggle('open', open);
-    shell.classList.toggle('hover', hovering); rects();
-  };
+  const update = () => { shell.classList.toggle('open', open); shell.classList.toggle('hover', hovering); rects(); };
   const api = {
     hover(on) { if (on !== hovering) { hovering = on; update(); } },
     toggle() { open = !open; update(); },
-    // Pin the bubble to a corner; the card and the field then open away from it (down from the top, right from the left).
+    // Pin the bubble to a corner; the field then opens away from it (down from the top, right from the left).
     anchor(t, l) { top = t; left = l; wrap.classList.toggle('top', t); wrap.classList.toggle('left', l); rects(); frame(); },
   };
   if (!app) {
-    // Over the bubble or a panel that shows, with a short grace period on leaving, so passing between them holds.
-    let leave = 0;
-    for (const el of [shell, cardEl]) {
-      el.addEventListener('mouseenter', () => { clearTimeout(leave); if (el === shell || el.classList.contains('in')) api.hover(true); });
-      el.addEventListener('mouseleave', () => { clearTimeout(leave); leave = setTimeout(() => api.hover(pin === 'card'), 180); });
-    }
+    shell.addEventListener('mouseenter', () => api.hover(true));
+    shell.addEventListener('mouseleave', () => api.hover(false));
     shell.addEventListener('click', api.toggle);
   }
   const glow = { step() {}, draw(t) {
     ctx.clearRect(0, 0, D, D);
     view.draw(Math.min(0.05, t - (glow.t ?? t)), t); glow.t = t;
   } };
-  run(art ? [[artEl, art]] : [], cv ? [glow, cv] : [glow]);
+  const stop = run(layout ? [[artEl, layout]] : [], cv ? [glow, cv] : [glow]);
   demo();
   update();
   frame();
+  // For the app's menu: today at a glance, every second.
+  const ticking = app ? setInterval(() => msg('today', today()), 1000) : 0;
+  // Stops it, for a preview that was replaced.
+  api.stop = () => { stop(); clearInterval(ticking); feed.channels.splice(feed.channels.indexOf(ch), 1); };
   return api;
+}
+
+// Today at a glance: the tokens that count, the rate now, the agents, and the projects (biggest first, five at most).
+export function today() {
+  const total = PROJECTS.reduce((n, p) => n + (feed.today[p] || 0), 0);
+  const working = feed.agents.filter(a => a.state && a.state !== 'waiting').length;
+  return {
+    total, what: countedWhat(), rate: flow.rate, agents: feed.agents.length, working, stale: feed.stale, live: feed.live,
+    updated: feed.updated, history: flow.history.slice(-60),
+    projects: [...PROJECTS].sort((a, b) => (feed.today[b] || 0) - (feed.today[a] || 0)).slice(0, 5)
+      .map(p => ({ name: NAMES[p] || p, color: RGB[p] || RGB.other, n: feed.today[p] || 0 })),
+  };
 }

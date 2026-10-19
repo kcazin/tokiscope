@@ -1,19 +1,21 @@
 # Tokiscope
 
-A small window that floats over the macOS desktop and shows your LLM agents at work: pixel-art machines carry today's
-tokens to the projects they went to. A menu bar item picks the layout (trucks, cranes, belt, silos) or a bubble, the
-zoom, click-through, background, and whether it sits above windows or on the desktop.
+A small bubble that floats over the macOS desktop and shows your LLM agents at work. Click it and it opens into a
+card or one of the pixel-art machines carrying today's tokens to the projects they went to (trucks, cranes, belt,
+silos), the trucks under the sky where you are, by your country's landmarks. The menu (the menu bar item, or a right
+click on the bubble) has today's tokens at a glance, hides the bubble and opens Settings.
 
-- `Tokiscope.swift` — the app: the window, the menu, agent-stats' background items, the hub feed, and the pages served
-  from the app bundle.
-- `lab/` — the pages it shows. `lab/index.html` is every layout side by side, `lab/bubble.html` the bubbles, the cards
-  they show on hover and the fields they open (the layouts, a throughput dashboard, the trucks at speed);
-  `?only=<layout>` and `?b=<bubble>&art=<layout>&app=1` are what the app loads (`&card=<card>` picks the hover card);
+- `Tokiscope.swift` — the app: the bubble's window, the menu, agent-stats' background items, the hub feed, and the
+  pages served from the app bundle.
+- `lab/` — the pages it shows. `lab/bubble.html` is the bubbles and what they open into (the cards, the layouts);
+  `?b=<bubble>&open=<card:key|layout>&app=1` is what the app loads. `lab/index.html` is every layout side by side
+  (`?only=<layout>` one alone), `lab/scene.html` every country's backdrop at dawn, by day, at dusk and at night.
   `?recent=<hours>` changes how long a project stays on after it was last worked on (2 by default).
-- `lab/settings.html` — the app's Settings window (menu bar > Settings…, or `--settings` at launch): every bubble, card
-  and layout running live, the ones in use outlined; click one to use it. Count picks the tokens the rates, meters,
-  odometers, traces and rain count (input, cache read, cache write, output; `?kinds=in,cr,cw,out` on any page): with
-  some of them, those views follow the agents' turns kind by kind; the trucks always carry every token.
+- `lab/settings.html` — the app's Settings window (menu > Settings…, or `--settings [machines | general]` at launch):
+  a live preview, every bubble and everything it can open into running live, the ones in use outlined; click one to
+  use it. Count picks the tokens that count (input, cache read, cache write, output; `?kinds=in,cr,cw,out` on any
+  page): everything shows only those, with today's figures from agent-stats 0.7 on, which splits each project's tokens
+  by kind; a unit (a square, a crate) is worth less when fewer count.
 - `icon/` — the app icon, pixel art like the widget: `make_icon.py` draws it, `make_icns.sh [concept]` makes the
   `AppIcon.icns` the build ships.
 - `lab/flow.html` — the throughput lab: the streamed tokens read as speed (an odometer, a seismograph of each agent's
@@ -23,29 +25,32 @@ zoom, click-through, background, and whether it sits above windows or on the des
 ## Your machines
 
 Tokiscope carries [agent-stats](https://github.com/kcazin/agent-stats), which counts the tokens your coding agents
-(Claude Code, Codex and others) use, and runs it as the app's background items. Your machines form a **fleet**: every
-Mac with Tokiscope is a **replica**, which runs the hub, keeps every machine's stats and syncs them with the other
-Macs, so the widget shows everything even while the other Macs sleep. Machines without Tokiscope (a Linux box, say)
-only run the reporter and send to whichever Mac answers. No Mac is the main one.
+(Claude Code, Codex and others) use, and runs it as the app's background items.
 
-- **First launch** looks for a fleet on your tailnet and local network: *Join “home”* asks a Mac of it to let this
-  one in. Both Macs show the same four digits; approve on any Mac of the fleet. *Start a New Fleet* makes this Mac
-  the first one. *Join by Address…* takes a Mac's address (or a line an older Add Machine… showed). The menu has
-  *Set Up This Mac…* after.
-- **Add Machine…** (on any Mac of the fleet) lists what it finds on the tailnet and the network. *Install* puts
+- **First launch** asks nothing: this Mac starts counting its own agents, with a hub only this Mac reaches, and
+  Settings opens once with a welcome. *Start Counting* in Settings › Machines does it if that couldn't.
+- Other machines are all in **Settings › Machines**. Your machines form a **fleet**: every Mac with Tokiscope is a
+  **replica**, which runs the hub, keeps every machine's stats and syncs them with the other Macs, so the bubble shows
+  everything even while the other Macs sleep. Machines without Tokiscope (a Linux box, say) only run the reporter and
+  send to whichever Mac answers. No Mac is the main one.
+- **Join Another Mac…** looks for a fleet on your tailnet and local network and asks a Mac of it to let this one in
+  (Settings also offers one it finds). Both Macs show the same four digits; approve on any Mac of the fleet. This
+  Mac's stats so far go with it. *Join by Address…* takes a Mac's address (or a line an older Add Machine… showed).
+- **Add a Machine…** (on any Mac of the fleet) lists what it finds on the tailnet and the network. *Install* puts
   agent-stats on a Linux box or a Mac without Tokiscope over SSH, with your keys and `~/.ssh/config`, and shows each
   step; if SSH would ask for a password, it opens Terminal with `ssh-copy-id` instead. Any other SSH target goes in
   the field below. For a machine this Mac can't reach by SSH, *Make a Line* gives a one-time line to paste there.
-  The first time, it opens the hub to the network (port 7777, over Tailscale or the local network); every machine
-  still needs to be approved or given a code to report or read.
-- When a Mac asks to join, every Mac of the fleet asks you to approve it (also in the menu until someone does).
-  *Machines* in the menu lists the fleet, who is online, and removes a machine.
-- After an update that brings fleets, a Mac set up before (the old main Mac, or one that joined it) becomes a replica
-  on its own; if that fails, the menu says why and offers to try again, and everything keeps running as it was.
-- An agent-stats **installed on its own** (install.sh) keeps running as it is; the widget reads it, and *Let Tokiscope
-  Run agent-stats…* moves its reporter, hub and updater to the app's background items (config and stats stay).
-- The widget reads the hub on this Mac first, then the hubs this Mac joined, with the read-only token each gave it.
-  A **relay** (*Load From > Other Stats Relay…*) is read when no hub answers.
+  The first time, once you say so, this Mac becomes the fleet's first replica and opens its hub to the network (port
+  7777, over Tailscale or the local network); every machine still needs to be approved or given a code to report or
+  read.
+- When a Mac asks to join, every Mac of the fleet asks you to approve it (also in the menu and Settings until someone
+  does). Settings › Machines lists the others, who is online, and removes a machine.
+- After an update that brings fleets, a Mac set up before that other machines report to becomes a replica on its
+  own; if that fails, Settings says why and offers to try again, and everything keeps running as it was.
+- An agent-stats **installed on its own** (install.sh) keeps running as it is; the bubble reads it, and *Let
+  Tokiscope Run It…* moves its reporter, hub and updater to the app's background items (config and stats stay).
+- The bubble reads the hub on this Mac first, then the hubs this Mac joined, with the read-only token each gave it.
+  A **relay** (Settings › General › Advanced) is read when no hub answers.
 
 `Tokiscope --stats create | replica | hub | join "<line>" | pair | take-over | start | stop | status` does the same
 from a script; `--stats add-machine [<ssh target>]` opens the Add Machine window, `--stats request <url>` asks a
@@ -82,8 +87,8 @@ or relay) they poll every 15 s as before. Pushed updates come a second apart, so
 tokens out over the time since its last ones (2–8 s) rather than over the 15 s between polls, and the rate is the last
 30 s, sampled every 15 s for the graph.
 
-To work on the pages without rebuilding: `python3 -m http.server 8765` here, then Load From > Local Copy in the menu,
-or open http://localhost:8765/lab/ in a browser.
+To work on the pages without rebuilding: `python3 -m http.server 8765` here, then Pages from > Local copy in Settings ›
+General › Advanced, or open http://localhost:8765/lab/ in a browser.
 
 ## License
 

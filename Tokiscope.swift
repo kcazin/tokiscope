@@ -1,15 +1,15 @@
-// Tokiscope: your agents at work (the machines carrying today's tokens) and the projects they go to, in a small window
-// that floats over the desktop. It shows one of the layouts in lab/ (?only=<layout>), from the copy bundled in the app
-// (BundlePages) or a local copy. A small menu, from the menu bar or a right click on the widget, hides and moves it;
-// Settings picks the layout and its size, sets the rest (click-through, background, above windows or on the desktop)
-// and has the fleet's machines. The stats come from the hub the app
-// runs on this Mac (Stats): every Mac of the fleet runs one and keeps everyone's stats, so every repository shows by
-// name (HubFeed), even while the other Macs sleep; or from a relay, when one is set and no hub can be reached
-// (RelayFeed). Both are streamed, so a change shows within a second or two, and polled when there is no stream.
+// Tokiscope: your agents at work, in a small bubble that floats over the desktop (lab/bubble.html, from the copy
+// bundled in the app, BundlePages, or a local copy). The bubble shows one live thing; click it and it opens into a
+// card or one of the lab's layouts (the machines carrying today's tokens to the projects); drag it anywhere. A small
+// menu, from the menu bar or a right click on the bubble, has today's tokens at a glance, hides the bubble and opens
+// Settings, which picks the bubble and what it opens into, and has the machines. The stats come from the hub the app
+// runs on this Mac (Stats): on its own at first, only this Mac reaching it; once other machines are added every Mac of
+// the fleet runs one and keeps everyone's stats, so every repository shows by name (HubFeed), even while the other
+// Macs sleep. Or from a relay, when one is set and no hub can be reached (RelayFeed). Both are streamed, so a change
+// shows within a second or two, and polled when there is no stream.
 // It updates itself (Sparkle) from the GitHub releases, which build.sh and dist.sh make.
-// In bubble mode it is a small floating bubble instead (lab/bubble.html): hover it for a card with more, click it
-// for the layout, drag it anywhere. The window stays at the full size the page asks for (it never resizes on hover, which
-// would make the web view flash) and lets the pointer through except over the bubble and whatever is showing.
+// The window stays at the full size the page asks for (it never resizes on hover, which would make the web view flash)
+// and lets the pointer through except over the bubble and whatever is open.
 
 import Cocoa
 import ServiceManagement
@@ -17,46 +17,29 @@ import Sparkle
 import SystemConfiguration
 import WebKit
 
-// Each layout's page and its size in CSS px for four projects (a lab page says its real size once it knows the projects).
-// The lab's layouts sit centred with `pad` round them; nil groups them.
-private struct Layout { let key, name, path: String; let size: NSSize; let padded: Bool }
-private let layouts: [Layout?] = [
-    Layout(key: "haul", name: "Trucks, with Project Lines", path: "/lab/?only=haul", size: NSSize(width: 320, height: 120), padded: true),
-    Layout(key: "pocket", name: "Trucks, Pocket", path: "/lab/?only=pocket", size: NSSize(width: 240, height: 96), padded: true),
-    Layout(key: "strip", name: "Trucks, Strip", path: "/lab/?only=strip", size: NSSize(width: 380, height: 66), padded: true),
-    Layout(key: "haulflow", name: "Trucks, at Speed", path: "/lab/?only=haulflow", size: NSSize(width: 320, height: 154), padded: true),
-    nil,
-    Layout(key: "dash", name: "Throughput Dashboard", path: "/lab/?only=dash", size: NSSize(width: 360, height: 344), padded: true),
-    Layout(key: "odometer", name: "Odometer", path: "/lab/?only=odometer", size: NSSize(width: 360, height: 158), padded: true),
-    Layout(key: "seismo", name: "Seismograph", path: "/lab/?only=seismo", size: NSSize(width: 360, height: 176), padded: true),
-    Layout(key: "rain", name: "Token Rain", path: "/lab/?only=rain", size: NSSize(width: 360, height: 200), padded: true),
-    Layout(key: "meters", name: "Level Meters", path: "/lab/?only=meters", size: NSSize(width: 240, height: 102), padded: true),
-    nil,
-    Layout(key: "gantry", name: "Gantry Crane", path: "/lab/?only=gantry", size: NSSize(width: 300, height: 120), padded: true),
-    Layout(key: "city", name: "Tower Crane City", path: "/lab/?only=city", size: NSSize(width: 264, height: 150), padded: true),
-    Layout(key: "belt", name: "Sorting Belt", path: "/lab/?only=belt", size: NSSize(width: 384, height: 48), padded: true),
-    Layout(key: "silos", name: "Silos", path: "/lab/?only=silos", size: NSSize(width: 128, height: 104), padded: true),
-]
+// What the bubble can open into (lab/bubble.html ?open=): one of the cards, or one of the lab's layouts.
+private let opens = ["card:classic", "card:speed", "card:agents", "haul", "pocket", "strip", "haulflow", "dash", "odometer",
+                     "seismo", "rain", "meters", "gantry", "city", "belt", "silos"]
 private let sites = [("Built In", BundlePages.origin), ("Local Copy (localhost:8765)", "http://localhost:8765")]
 private let zooms: [(String, CGFloat)] = [("Small", 1), ("Medium", 1.5), ("Large", 2)]
-private let pad: CGFloat = 10
 private let bubbles = [("orb", "Agents Orb"), ("ring", "Today Ring"), ("globe", "Squares Globe"), ("pulse", "Token Rate"),
                        ("tach", "Tachometer"), ("odo", "Odometer"), ("quake", "Seismograph"), ("rain", "Token Rain"), ("ecg", "Heartbeat")]
 // The tokens the rates, meters and traces count (lab/flow.js ?kinds=): any of these, all by default.
 private let tokenKinds = [("in", "Input"), ("cr", "Cache Read"), ("cw", "Cache Write"), ("out", "Output")]
-// What the bubble shows beside it while the pointer is over it.
-private let cards = [("classic", "Agents and Today"), ("speed", "Speed"), ("agents", "Agents, Live")]
 
 private enum Pref {
     static let d = UserDefaults.standard
-    static var layout: String { get { d.string(forKey: "layout") ?? "haul" } set { d.set(newValue, forKey: "layout") } }
+    // What the bubble opens into; before, the layout it opened (or the widget, gone since, showed).
+    static var open: String {
+        get { [d.string(forKey: "open"), d.string(forKey: "layout")].compactMap { $0 }.first { opens.contains($0) } ?? "haul" }
+        set { d.set(newValue, forKey: "open") }
+    }
+    // Settings opens once with a welcome, after the first launch set this Mac up.
+    static var welcome: Bool { get { d.bool(forKey: "welcome") } set { d.set(newValue, forKey: "welcome") } }
     static var site: String { get { d.string(forKey: "site") ?? sites[0].1 } set { d.set(newValue, forKey: "site") } }
     static var zoom: CGFloat { get { d.object(forKey: "zoom") as? CGFloat ?? 1 } set { d.set(newValue, forKey: "zoom") } }
-    static var customURL: String? { get { d.string(forKey: "customURL") } set { d.set(newValue, forKey: "customURL") } }
     static var relay: String? { get { d.string(forKey: "relay") } set { d.set(newValue, forKey: "relay") } }
-    static var bubbleMode: Bool { get { d.bool(forKey: "bubbleMode") } set { d.set(newValue, forKey: "bubbleMode") } }
     static var bubble: String { get { d.string(forKey: "bubble") ?? "orb" } set { d.set(newValue, forKey: "bubble") } }
-    static var card: String { get { d.string(forKey: "card") ?? "classic" } set { d.set(newValue, forKey: "card") } }
     static var kinds: [String] {
         get {
             let all = tokenKinds.map(\.0), k = (d.string(forKey: "kinds") ?? "").split(separator: ",").map(String.init).filter(all.contains)
@@ -64,8 +47,6 @@ private enum Pref {
         }
         set { d.set(newValue.joined(separator: ","), forKey: "kinds") }
     }
-    static var clickThrough: Bool { get { d.object(forKey: "clickThrough") as? Bool ?? true } set { d.set(newValue, forKey: "clickThrough") } }
-    static var glass: Bool { get { d.object(forKey: "glass") as? Bool ?? true } set { d.set(newValue, forKey: "glass") } }
     static var onDesktop: Bool { get { d.bool(forKey: "onDesktop") } set { d.set(newValue, forKey: "onDesktop") } }
     // The sky behind the trucks (lab/scene.js ?scene=): "auto" for the city of the Mac's time zone, a city, or "off".
     static var scene: String {
@@ -91,22 +72,7 @@ final class Panel: NSPanel {
     }
 }
 
-// Covers the page while moving: drag anywhere to move, drag the edges to resize.
-final class MoveView: NSView {
-    override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
-    override func resetCursorRects() { addCursorRect(bounds.insetBy(dx: 6, dy: 6), cursor: .openHand) }
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.white.withAlphaComponent(0.06).setFill()
-        bounds.fill()
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 11, yRadius: 11)
-        path.lineWidth = 2
-        path.setLineDash([6, 4], count: 2, phase: 0)
-        NSColor.white.withAlphaComponent(0.6).setStroke()
-        path.stroke()
-    }
-}
-
-// Bubble mode: hover and clicks go to the page; a drag moves the window.
+// Over the bubble: hover and clicks go to the page; a drag moves the window.
 final class BubbleView: NSView {
     var onClick: (() -> Void)?
     var onDragBegan: (() -> Void)?
@@ -124,6 +90,85 @@ final class BubbleView: NSView {
     override func mouseUp(with event: NSEvent) { if dragged { onDragEnded?() } else { onClick?() } }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 }
+
+// The top of the menu: today at a glance, as the bubble's page says it every second (bubble.js `today`): the tokens
+// that count, the rate now, the agents, the last minute's rate, and the projects.
+final class TodayView: NSView {
+    private var d: [String: Any] = [:]
+    private(set) var hasData = false
+    private let W: CGFloat = 280, pad: CGFloat = 14
+    override var isFlipped: Bool { true }
+    init() { super.init(frame: NSRect(x: 0, y: 0, width: 280, height: 60)) }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private var projects: [[String: Any]] { d["projects"] as? [[String: Any]] ?? [] }
+    private var history: [Double] { (d["history"] as? [NSNumber])?.map(\.doubleValue) ?? [] }
+    private var hasSpark: Bool { history.contains { $0 > 0 } }
+    func show(_ d: [String: Any]) {
+        self.d = d; hasData = true
+        let h: CGFloat = 8 + 28 + 18 + (hasSpark ? 32 : 6) + CGFloat(projects.count) * 19 + 22
+        if frame.height != h { setFrameSize(NSSize(width: W, height: h)) }
+        needsDisplay = true
+    }
+    // 1.2B, 41M, 8.2K, as the pages say them.
+    static func short(_ n: Double) -> String {
+        let fix = { (v: Double) in v >= 100 ? String(format: "%.0f", v) : v >= 10 ? String(format: "%.0f", v) : String(format: "%.1f", v) }
+        return n >= 1e9 ? fix(n / 1e9) + "B" : n >= 1e6 ? fix(n / 1e6) + "M" : n >= 1e3 ? "\(Int(n / 1e3))K" : "\(Int(n))"
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        let num = { (k: String) in (self.d[k] as? NSNumber)?.doubleValue ?? 0 }
+        let text = { (s: String, at: NSPoint, font: NSFont, color: NSColor) in
+            (s as NSString).draw(at: at, withAttributes: [.font: font, .foregroundColor: color])
+        }
+        let size = { (s: String, font: NSFont) in (s as NSString).size(withAttributes: [.font: font]) }
+        var y: CGFloat = 8
+        let big = NSFont.systemFont(ofSize: 22, weight: .semibold), what = (d["what"] as? String) ?? "tokens"
+        let total = TodayView.short(num("total"))
+        text(total, NSPoint(x: pad, y: y), big, .labelColor)
+        text("\(what) today", NSPoint(x: pad + size(total, big).width + 6, y: y + 8), .systemFont(ofSize: 12), .secondaryLabelColor)
+        y += 30
+        let mono = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        let agents = Int(num("agents")), working = Int(num("working"))
+        let line = d["stale"] as? Bool == true ? "Not live"
+            : "\(TodayView.short(num("rate")))/s now · \(agents) agent\(agents == 1 ? "" : "s")\(working > 0 && working < agents ? ", \(working) working" : "")"
+        text(line, NSPoint(x: pad, y: y), mono, .secondaryLabelColor)
+        y += 18
+        // The last minute's rate.
+        if hasSpark {
+            let r = NSRect(x: pad, y: y + 2, width: W - 2 * pad, height: 24), h = history, top = max(1, h.max() ?? 1)
+            let path = NSBezierPath()
+            for (i, v) in h.enumerated() {
+                let p = NSPoint(x: r.minX + r.width * CGFloat(i) / CGFloat(max(1, h.count - 1)), y: r.maxY - r.height * CGFloat(v / top))
+                i == 0 ? path.move(to: p) : path.line(to: p)
+            }
+            NSColor.controlAccentColor.withAlphaComponent(0.9).setStroke()
+            path.lineWidth = 1.5
+            path.stroke()
+            y += 32
+        } else { y += 6 }
+        // The projects, biggest first, each with a bar to scale with the biggest.
+        let most = max(1, projects.map { ($0["n"] as? NSNumber)?.doubleValue ?? 0 }.max() ?? 1)
+        let small = NSFont.systemFont(ofSize: 12)
+        for p in projects {
+            let n = (p["n"] as? NSNumber)?.doubleValue ?? 0, rgb = (p["color"] as? [NSNumber])?.map { CGFloat($0.doubleValue) / 255 } ?? [0.7, 0.7, 0.7]
+            let color = NSColor(srgbRed: rgb[0], green: rgb[safe: 1] ?? 0.7, blue: rgb[safe: 2] ?? 0.7, alpha: 1)
+            color.setFill()
+            NSBezierPath(roundedRect: NSRect(x: pad, y: y + 5, width: 7, height: 7), xRadius: 1.5, yRadius: 1.5).fill()
+            text(p["name"] as? String ?? "", NSPoint(x: pad + 14, y: y), small, .labelColor)
+            let v = TodayView.short(n), vw = size(v, mono).width
+            text(v, NSPoint(x: W - pad - vw, y: y + 1), mono, .labelColor)
+            color.withAlphaComponent(0.5).setFill()
+            NSRect(x: pad + 14, y: y + 16, width: (W - 2 * pad - 14) * CGFloat(n / most), height: 1).fill()
+            y += 19
+        }
+        // How fresh it is.
+        let updated = num("updated"), ago = updated > 0 ? Int(Date().timeIntervalSince1970 - updated / 1000) : -1
+        let fresh = ago < 0 ? "Connecting…" : "\(d["live"] as? Bool == true ? "Live" : "Updated") · \(ago < 60 ? "\(max(0, ago))s" : "\(ago / 60) min") ago"
+        text(fresh, NSPoint(x: pad, y: y + 4), .systemFont(ofSize: 10), .tertiaryLabelColor)
+    }
+}
+
+private extension Array { subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil } }
 
 // ---- Streams ------------------------------------------------------------------------------------------------------
 // One Server-Sent Events connection: `onEvent(name, data)` for each event, then `onEnd(status)` once: the HTTP status
@@ -300,8 +345,8 @@ final class HubFeed {
 }
 
 // ---- The relay ----------------------------------------------------------------------------------------------------
-// A hub may publish its public totals to a relay (agent-stats relay serve), which the widget reads when the hub can't
-// be reached, if one is set in the menu (Other Stats Relay…). The built-in pages can't read a relay themselves (it doesn't allow their origin, and they can't hold a
+// A hub may publish its public totals to a relay (agent-stats relay serve), which the bubble reads when the hub can't
+// be reached, if one is set in Settings (General › Advanced › Stats relay). The built-in pages can't read a relay themselves (it doesn't allow their origin, and they can't hold a
 // stream through the app's scheme), so the app follows the relay's /stream: a full `stats`, then merge patches as the
 // hub publishes. Each document goes to the page (window.relayFeed), and /relay/stats answers from it for older pages.
 // A relay without the stream (404) is fetched by /relay/stats as before, and its stream tried again every five minutes.
@@ -329,7 +374,7 @@ final class RelayFeed {
         connect()
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.connect() }
     }
-    // Another relay picked in the menu.
+    // Another relay picked in Settings.
     func restart() { stream?.close(); stream = nil; doc = nil; latest = nil; fails = 0; retryAt = .distantPast; connect() }
 
     private func connect() {
@@ -358,7 +403,7 @@ final class RelayFeed {
 // launchd jobs in Contents/Library/LaunchAgents: the reporter, which counts the tokens this Mac's coding agents use and
 // sends them to the hub here; the hub, which keeps every machine's stats and syncs them with the other Macs of the
 // fleet (each is a replica: none is the main one, and any can add a machine); and the updater, which keeps a copy of
-// the release for the fleet's other machines. The widget shows the hub's view (HubFeed). Machines without Tokiscope
+// the release for the fleet's other machines. The bubble shows the hub's view (HubFeed). Machines without Tokiscope
 // (Linux boxes) only report: the Add Machine… sheet installs agent-stats on them over SSH (agent-stats fleet add).
 // An agent-stats installed on its own (install.sh, launchd jobs dev.agent-stats.*) keeps running as it is, and the
 // app only reads it until asked to take it over. An agent-stats from before fleets (0.5) runs the old way: one Mac
@@ -544,11 +589,16 @@ enum Stats {
         try joinLocal()
         try start(report)
     }
-    // The reporter here, joined to the hub here over loopback, unless it is already.
-    private static func joinLocal() throws {
+    // The id of the hub here (its fleet's, for a replica).
+    static var hubId: String? {
         let state = ProcessInfo.processInfo.environment["XDG_STATE_HOME"].map { URL(fileURLWithPath: $0).appendingPathComponent("agent-stats") }
             ?? home.appendingPathComponent(".local/state/agent-stats")
         let id = ((try? String(contentsOf: state.appendingPathComponent("hub-id"), encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return id.isEmpty ? nil : id
+    }
+    // The reporter here, joined to the hub here over loopback, unless it is already.
+    private static func joinLocal() throws {
+        let id = hubId ?? ""
         let config = (try? String(contentsOf: configToml, encoding: .utf8)) ?? ""
         if id.isEmpty || !config.contains("\"\(id)\"") {
             guard let p = parse(try joinLine(try exec(["hub", "pair", "--label", label]))) else { throw Failure(message: "agent-stats hub pair didn't print a code.") }
@@ -573,15 +623,17 @@ enum Stats {
         try start(report)
     }
     // Before fleets one Mac ran the hub and the others only reported to it. Now each Mac is a replica: it runs the hub
-    // too and keeps everyone's stats, so its widget works while the others sleep. agent-stats turns this Mac's setup
+    // too and keeps everyone's stats, so its bubble works while the others sleep. agent-stats turns this Mac's setup
     // into one (`fleet replica`: the old hub becomes the fleet's first replica, a Mac that only reported gets a hub of
     // its own), then the hub starts, or restarts on its new config. Nothing changes if that fails: the jobs that ran
     // keep running as they were.
+    // A Mac on its own, its hub only this Mac reaches, stays as it is until another machine comes in (`force`: Add
+    // Machine…, once you said it may open to the network).
     static var wantsReplica: Bool {
-        separate.filter { $0 != "relay" }.isEmpty && (isHub || joined) && !isReplica && !stopped
+        separate.filter { $0 != "relay" }.isEmpty && (isHub || joined) && !isReplica && !stopped && !(isHub && hubOnLoopback)
     }
-    static func becomeReplica() throws {
-        guard wantsReplica else { return }
+    static func becomeReplica(force: Bool = false) throws {
+        guard wantsReplica || (force && isHub && !isReplica) else { return }
         let running = hubJob.status == .enabled
         try exec(["fleet", "replica", "--json"], timeout: 120)
         if running { try restart("com.kilcazn.tokiscope.hub"); Thread.sleep(forTimeInterval: 1) } else { try start(hubJob) }
@@ -729,7 +781,7 @@ enum Stats {
         guard separate.filter({ $0 != "relay" }).isEmpty else {
             throw Failure(message: "agent-stats runs on its own here: Let Tokiscope Run agent-stats… takes it over.")
         }
-        guard isHub || joined else { throw Failure(message: "This Mac isn't set up yet: Set Up This Mac… in Settings › Machines.") }
+        guard isHub || joined else { throw Failure(message: "This Mac isn't counting yet: Start Counting in Settings › Machines.") }
         try stop()
         if isHub { try start(hubJob); try start(updater); try waitForHub() }
         if joined { try start(report) }
@@ -1117,12 +1169,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
                  SPUStandardUserDriverDelegate {
     private var panel: Panel!
     private var web: WKWebView!
-    private var glass: NSVisualEffectView!
-    private var mover: MoveView!
     private var handle: BubbleView!
     private var root: NSView!
     private var item: NSStatusItem!
-    private var moving = false
+    private let todayView = TodayView()
     private let hub = HubFeed()
     private let relay = RelayFeed()
     private let pages = BundlePages()
@@ -1188,7 +1238,6 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
                 exit(1)
             }
         }
-        if let i = CommandLine.arguments.firstIndex(of: "--url"), i + 1 < CommandLine.arguments.count { Pref.customURL = CommandLine.arguments[i + 1] }
         if let i = CommandLine.arguments.firstIndex(of: "--site"), i + 1 < CommandLine.arguments.count { Pref.site = CommandLine.arguments[i + 1] }
 
         let size = windowSize(), screen = NSScreen.main?.visibleFrame ?? .zero
@@ -1202,38 +1251,19 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         panel.setFrameAutosaveName("TokiscopeLayout")
 
-        // Rounded corners: everything sits in a layer-backed view that clips to them.
         root = NSView(frame: NSRect(origin: .zero, size: panel.frame.size))
         root.autoresizingMask = [.width, .height]
-        root.wantsLayer = true
-        root.layer?.cornerRadius = 12
-        root.layer?.masksToBounds = true
-
-        glass = NSVisualEffectView(frame: root.bounds)
-        glass.autoresizingMask = [.width, .height]
-        glass.material = .hudWindow
-        glass.blendingMode = .behindWindow
-        glass.state = .active
-        glass.appearance = NSAppearance(named: .darkAqua)
-        let tint = NSView(frame: glass.bounds)                   // darker than the material alone, like the site
-        tint.autoresizingMask = [.width, .height]
-        tint.wantsLayer = true
-        tint.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.62).cgColor
-        glass.addSubview(tint)
 
         let config = WKWebViewConfiguration()
         config.mediaTypesRequiringUserActionForPlayback = .all
         config.userContentController.add(self, name: "frame")
         config.userContentController.add(self, name: "rects")
         config.userContentController.add(self, name: "hub")
+        config.userContentController.add(self, name: "today")
         config.setURLSchemeHandler(pages, forURLScheme: BundlePages.scheme)
         web = WKWebView(frame: root.bounds, configuration: config)
         web.autoresizingMask = [.width, .height]
         web.setValue(false, forKey: "drawsBackground")   // the page is transparent; show what's behind it
-
-        mover = MoveView(frame: root.bounds)
-        mover.autoresizingMask = [.width, .height]
-        mover.isHidden = true
 
         handle = BubbleView(frame: root.bounds)
         handle.autoresizingMask = [.width, .height]
@@ -1242,10 +1272,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         handle.onDragMoved = { [weak self] p in self?.dragMoved(to: p) }
         handle.onDragEnded = { [weak self] in self?.dragEnded() }
 
-        root.addSubview(glass)
         root.addSubview(web)
         root.addSubview(handle)
-        root.addSubview(mover)
         panel.contentView = root
         panel.onMenu = { [weak self] in self?.showContextMenu($0) }
 
@@ -1265,7 +1293,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         pages.feed = relay
         relay.onUpdate = { [weak self] js in self?.feedPages().forEach { $0.evaluateJavaScript("window.relayFeed?.(\(js))") } }
         relay.start()
-        if CommandLine.arguments.contains("--settings") { openSettings() }
+        // `--settings [machines | general]`: Settings open on that tab, for scripts and screenshots.
+        if let i = CommandLine.arguments.firstIndex(of: "--settings") {
+            let tab = CommandLine.arguments.dropFirst(i + 1).first.flatMap { ["machines", "general"].contains($0) ? $0 : nil }
+            showSettings(tab)
+        }
         if Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil {
             updates = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: self)
         }
@@ -1280,28 +1312,24 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
             }
             // Join requests, from agent-stats when the hub's stream doesn't say them.
             Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.pollRequests() }
-            // First launch: which part this Mac plays. Asked once; the menu has it after.
+            // First launch: this Mac starts counting, without a question. Once; Settings has Start Counting after.
             if !Stats.setUp, !UserDefaults.standard.bool(forKey: "setupOffered") {
                 UserDefaults.standard.set(true, forKey: "setupOffered")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.setUp() }
+                setUpQuietly(welcome: true)
             }
         }
     }
 
-    private var layout: Layout { layouts.compactMap { $0 }.first { $0.key == Pref.layout } ?? layouts[0]! }
-    private func windowSize() -> NSSize {
-        if Pref.bubbleMode { return NSSize(width: 84 * Pref.zoom, height: 84 * Pref.zoom) }
-        let s = pageSizes[layout.key] ?? layout.size, p = layout.padded ? pad * 2 : 0
-        return NSSize(width: (s.width + p) * Pref.zoom, height: (s.height + p) * Pref.zoom)
-    }
+    // The bubble alone, until the page says how much room it needs.
+    private func windowSize() -> NSSize { NSSize(width: 84 * Pref.zoom, height: 84 * Pref.zoom) }
 
-    // A lab page from where the pages load, reading the stats from the relay the menu picks, if any.
-    private func link(_ page: String, custom: String? = nil) -> URL? {
+    // A lab page from where the pages load, reading the stats from the relay Settings picks, if any.
+    private func link(_ page: String) -> URL? {
         var page = page
         // A local copy reads the stats from another relay when given one; the built-in pages always through the app.
         if let relay = Pref.relay, Pref.site != BundlePages.origin,
            let q = relay.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~:/"))) { page += "&relay=\(q)" }
-        var link = custom ?? Pref.site + page
+        var link = Pref.site + page
         if Pref.relay != nil, link.hasPrefix(BundlePages.origin + "/"), !link.contains("relay=") {
             link += (link.contains("?") ? "&" : "?") + "relay=\(BundlePages.origin)/relay"
         }
@@ -1309,11 +1337,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
 
     private func load() {
-        // In bubble mode the field opened on click is the layout, if it is one of the lab's.
-        let art = layout.padded ? layout.key : "haul"
-        let page = (Pref.bubbleMode ? "/lab/bubble.html?b=\(Pref.bubble)&card=\(Pref.card)&art=\(art)&app=1" : layout.path)
-            + "&kinds=\(Pref.kinds.joined(separator: ","))&scene=\(Pref.scene)"
-        guard let url = link(page, custom: Pref.customURL) else { return }
+        let page = "/lab/bubble.html?b=\(Pref.bubble)&open=\(Pref.open)&app=1&kinds=\(Pref.kinds.joined(separator: ","))&scene=\(Pref.scene)"
+        guard let url = link(page) else { return }
         web.pageZoom = Pref.zoom
         hovering = false; hotRects = []; rectsTop = false; rectsLeft = false; isOpen = false; anchored = false   // the new page reports its own
         // Always the page's current code: drop WebKit's cache of it first.
@@ -1322,21 +1347,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         }
     }
 
-    // Fit the window to the layout, keeping its bottom right corner where it is.
-    private func fit() { resize(to: windowSize(), animate: !Pref.bubbleMode) }
-    private func resize(to s: NSSize, animate: Bool) {
-        let f = panel.frame
-        panel.setFrame(NSRect(x: f.maxX - s.width, y: f.minY, width: s.width, height: s.height), display: true, animate: animate)
-    }
-
     // The page says how big the window must be to hold everything (`frame`) and which parts take the pointer (`rects`,
     // in CSS px from the bottom right: r and b are the gaps to the right and bottom edges). A timer watches the pointer: over one of those parts the window takes the mouse and
     // the bubble is hovered; elsewhere clicks fall through, and hovering ends after a fifth of a second outside.
     private var hotRects: [NSRect] = [], rectsTop = false, rectsLeft = false   // and the corner they are measured from
     private var pointerTimer: Timer?
     private var hovering = false, outside = 0
-    // A layout grows with the projects the stats name: its page says its size (`frame` with `widget`) when it is built.
-    private var pageSizes: [String: NSSize] = [:]
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "hub" {                       // a page just loaded: the hub's view, else the relay's
             guard let page = message.webView else { return }
@@ -1347,12 +1363,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         if message.name == "pick", let d = message.body as? [String: String], let key = d["key"] { return pick(d["kind"] ?? "", key) }
         guard message.webView === web else { return }
         guard let d = message.body as? [String: Any] else { return }
-        if !Pref.bubbleMode {
-            guard message.name == "frame", d["widget"] as? Bool == true, let w = d["w"] as? Double, let h = d["h"] as? Double else { return }
-            let s = NSSize(width: w, height: h)
-            if s != (pageSizes[layout.key] ?? layout.size) { pageSizes[layout.key] = s; fit() }
-            return
-        }
+        if message.name == "today" { return todayView.show(d) }
         if message.name == "frame", let w = d["w"] as? Double, let h = d["h"] as? Double {
             fullSize = NSSize(width: CGFloat(w) * Pref.zoom, height: CGFloat(h) * Pref.zoom)
             fieldSize = NSSize(width: d["aw"] as? Double ?? 56, height: d["ah"] as? Double ?? 56)
@@ -1433,12 +1444,6 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         pointerTimer = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in self?.checkPointer() }
     }
     private func checkPointer() {
-        // A click-through widget takes the pointer only while ⌃ is held over it, for its menu.
-        if !Pref.bubbleMode {
-            let take = panel.isVisible && NSEvent.modifierFlags.contains(.control) && panel.frame.contains(NSEvent.mouseLocation)
-            if panel.ignoresMouseEvents == take { panel.ignoresMouseEvents = !take }
-            return
-        }
         // Until the page reports, the bubble's own corner counts.
         let p = NSEvent.mouseLocation, f = panel.frame, z = Pref.zoom
         let hot = hotRects.isEmpty ? [NSRect(x: 10, y: 10, width: 64, height: 64)] : hotRects
@@ -1457,29 +1462,24 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         }
     }
 
-    // Window level, click-through, background and the move overlay, from the current settings.
+    // Above windows or on the desktop; the pointer is watched to let clicks through around the bubble.
     private func apply() {
         panel.level = Pref.onDesktop ? NSWindow.Level(Int(CGWindowLevelForKey(.desktopIconWindow)) + 1) : .floating
-        let bubble = Pref.bubbleMode
-        panel.ignoresMouseEvents = bubble || (Pref.clickThrough && !moving)
-        watchPointer(bubble || (Pref.clickThrough && !moving))
-        glass.isHidden = bubble || !Pref.glass
-        root.layer?.cornerRadius = bubble ? 0 : 12
-        handle.isHidden = !bubble || moving
-        mover.isHidden = !moving
-        mover.needsDisplay = true
+        panel.ignoresMouseEvents = true
+        watchPointer(true)
         syncSettings()
     }
 
     private func pushHub(_ args: String) { feedPages().forEach { $0.evaluateJavaScript("window.hubFeed?.(\(args))") } }
-    // The pages the stats go to: the widget's, and the settings' while that window is open.
+    // The pages the stats go to: the bubble's, and the settings' while that window is open.
     private func feedPages() -> [WKWebView] { [web] + (settingsWindow?.isVisible == true ? [settingsWeb!] : []) }
 
     // ---- Settings -----------------------------------------------------------------------------------------------
-    // A window (lab/settings.html) in three tabs. Look: every bubble, card and layout running live, the ones in use
-    // outlined, with the size, the tokens counted and the window's options. Machines: the fleet, adding and removing
-    // machines, join requests, what agent-stats needs. General: login, updates, where the pages and stats come from.
-    // The page says what was picked or asked for (`pick`), and hears back the whole state whenever it changes.
+    // A window (lab/settings.html) in three tabs. Bubble: a live preview, the size, where it sits, the tokens counted,
+    // and every bubble and what it can open into running live, the ones in use outlined. Machines: this Mac and the
+    // others, adding one or joining another Mac's, join requests, what agent-stats needs. General: login, updates, and
+    // where the pages and stats come from. The page says what was picked or asked for (`pick`), and hears back the
+    // whole state whenever it changes.
     private var settingsWindow: NSWindow?
     private var settingsWeb: WKWebView?
     private var settingsTimer: Timer?
@@ -1512,13 +1512,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         if settingsWindow?.isVisible == true {
             if let tab { settingsWeb?.evaluateJavaScript("window.settings?.set({ tab: '\(tab)' })") }
         } else {
-            let state = "mode=\(Pref.bubbleMode ? "bubble" : "widget")&b=\(Pref.bubble)&card=\(Pref.card)&layout=\(layout.key)&kinds=\(Pref.kinds.joined(separator: ","))&scene=\(Pref.scene)"
+            let state = "b=\(Pref.bubble)&open=\(Pref.open)&kinds=\(Pref.kinds.joined(separator: ","))&scene=\(Pref.scene)"
                 + (tab.map { "&tab=\($0)" } ?? "")
             if let url = link("/lab/settings.html?\(state)") { settingsWeb?.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)) }
             // The machines' state, while it shows.
             settingsTimer?.invalidate()
             settingsTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.refreshMembers(); self?.syncSettings() }
             refreshMembers()
+            if tab == "machines" { discover() }
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
@@ -1535,29 +1536,33 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
     private func settingsState() -> [String: Any] {
         var s: [String: Any] = [
-            "mode": Pref.bubbleMode ? "bubble" : "widget", "b": Pref.bubble, "card": Pref.card, "layout": layout.key, "kinds": Pref.kinds, "scene": Pref.scene,
-            "zoom": zooms.firstIndex { $0.1 == Pref.zoom } ?? 0, "zooms": zooms.map(\.0),
-            "desktop": Pref.onDesktop, "glass": Pref.glass, "clickThrough": Pref.clickThrough,
+            "b": Pref.bubble, "open": Pref.open, "kinds": Pref.kinds, "scene": Pref.scene,
+            "zoom": zooms.firstIndex { $0.1 == Pref.zoom } ?? 0, "zooms": zooms.map(\.0), "desktop": Pref.onDesktop, "welcome": Pref.welcome,
             "login": SMAppService.mainApp.status == .enabled, "updates": updates != nil,
+            "autoUpdates": updates?.updater.automaticallyChecksForUpdates ?? false,
             "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
-            "site": sites.firstIndex { $0.1 == Pref.site } ?? -1, "sites": sites.map(\.0),
-            "pageURL": Pref.customURL ?? "", "relay": Pref.relay ?? "",
+            "site": sites.firstIndex { $0.1 == Pref.site } ?? -1, "sites": sites.map(\.0), "relay": Pref.relay ?? "",
             "source": (hub.route.map { "From the hub, \(URL(string: $0.url)?.host ?? $0.url)" }
                        ?? (Pref.relay != nil ? "From the relay (no hub answers)" : "None: no hub answers"))
                 + ((hub.route != nil ? hub.live : relay.live) ? ", live" : ""),
         ]
         guard Stats.bundled || Stats.setUp else { return s }
-        let list = fleet == true && Stats.isReplica
+        // The other machines: those of the fleet (a Mac on its own has none).
+        let others: [[String: Any]] = !(fleet == true && Stats.isReplica) ? [] : members.compactMap { m in
+            let machine = m["machine"] as? String ?? ""
+            guard machine != node else { return nil }
+            let platform = (m["platform"] as? String ?? "").lowercased()
+            return ["machine": machine, "name": m["label"] as? String ?? machine,
+                    "online": m["online"] as? Bool == true, "revoked": m["revoked"] as? Bool == true,
+                    "kind": platform.hasPrefix("darwin") || platform.hasPrefix("mac") ? "Mac" : platform.hasPrefix("linux") ? "Linux" : platform.isEmpty ? "" : platform.capitalized,
+                    "replica": m["role"] as? String == "replica", "version": m["version"] as? String ?? ""]
+        }
         s["stats"] = [
-            "busy": busy as Any, "setUp": Stats.setUp, "canSetUp": Stats.bundled && !Stats.setUp, "summary": Stats.summary(statsVersion),
+            "busy": busy as Any, "canSetUp": Stats.bundled && !Stats.setUp, "running": !Stats.stopped && Stats.setUp,
+            "self": Stats.label, "version": statsVersion ?? "",
             "problems": statsProblems().map { ["text": $0.text, "button": $0.button, "do": $0.action] },
-            "dashboard": Stats.isHub ? (fleet == true ? "Open the Dashboard" : "Open the Hub's Dashboard") : NSNull(),
-            "machines": !list ? NSNull() : members.map { m -> [String: Any] in
-                let machine = m["machine"] as? String ?? ""
-                return ["machine": machine, "name": m["label"] as? String ?? machine, "self": machine == node,
-                        "online": m["online"] as? Bool == true, "revoked": m["revoked"] as? Bool == true,
-                        "replica": m["role"] as? String == "replica", "version": m["version"] as? String ?? ""]
-            },
+            "dashboard": Stats.isHub, "machines": others,
+            "found": found.map { ["name": $0.name, "node": $0.node, "url": $0.url] },
             "requests": requests.map { r in ["id": r["id"] as? String ?? "", "who": r["label"] as? String ?? r["machine"] as? String ?? "A machine",
                                              "digits": App.spaced(r["digits"] as? String ?? "")] },
         ] as [String: Any]
@@ -1577,32 +1582,35 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     private func pick(_ kind: String, _ key: String) {
         switch kind {
         case "ready": syncSettings()
-        case "mode": useMode(bubble: key == "bubble")
-        case "bubble": if let i = bubbles.firstIndex(where: { $0.0 == key }) { useBubble(i) }
-        case "card": if let i = cards.firstIndex(where: { $0.0 == key }) { useCard(i) }
-        case "layout": if let i = layouts.firstIndex(where: { $0?.key == key }) { useLayout(i) }
+        case "tab": if key == "machines" { discover() }
+        case "bubble": if bubbles.contains(where: { $0.0 == key }) { Pref.bubble = key; load(); syncSettings() }
+        case "open": if opens.contains(key) { Pref.open = key; load(); syncSettings() }
         case "kinds": useKinds(key.split(separator: ",").map(String.init))
         case "scene": Pref.scene = key; load(); syncSettings()
         case "zoom": if let i = Int(key), zooms.indices.contains(i) { useZoom(i) }
         case "site": if let i = Int(key), sites.indices.contains(i) { useSite(i) }
         case "desktop": Pref.onDesktop = key == "1"; apply()
-        case "glass": Pref.glass = key == "1"; apply()
-        case "clickThrough": Pref.clickThrough = key == "1"; apply()
         // The rest may open an alert or a window: from the run loop, not inside the page's message.
         case "remove": soon { self.removeMachine(key) }
         case "request": soon { self.askRequest(id: key) }
+        case "join": if let f = found.first(where: { $0.url == key }) { soon { self.requestJoin(f.url, f.name) } }
         case "do":
             soon {
                 switch key {
                 case "login": self.toggleLogin()
                 case "updates": self.updates?.checkForUpdates(nil)
+                case "autoUpdates":
+                    if let u = self.updates?.updater { u.automaticallyChecksForUpdates.toggle() }
+                    self.syncSettings()
+                case "welcomeDone": Pref.welcome = false; self.syncSettings()
                 case "addMachine": self.addMachine()
+                case "join": self.joinAnother()
                 case "dashboard": self.openDashboard()
                 case "setUp": self.setUp()
                 case "start": self.startStats()
+                case "stop": self.stopStats()
                 case "takeOver": self.takeOver()
                 case "retryReplica": self.retryReplica()
-                case "pageURL": self.editURL()
                 case "relay": self.editRelay()
                 case "reload": self.reload()
                 default: break
@@ -1613,8 +1621,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
 
     // ---- Menu ---------------------------------------------------------------------------------------------------
-    // Small, the same from the menu bar and from a right click on the widget: join requests (they wait on you), hiding
-    // and moving the widget, what agent-stats needs, Settings. Everything else is in Settings.
+    // Small, the same from the menu bar and from a right click on the bubble: today's tokens at a glance, join requests
+    // (they wait on you), hiding the bubble, what agent-stats needs, Settings. Everything else is in Settings.
     func menuNeedsUpdate(_ menu: NSMenu) { fill(menu) }
     private func fill(_ menu: NSMenu) {
         menu.removeAllItems()
@@ -1623,6 +1631,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
             i.target = self
             return i
         }
+        if todayView.hasData {
+            let today = NSMenuItem()
+            today.view = todayView
+            menu.addItem(today)
+            menu.addItem(.separator())
+        }
         if busy == nil, Stats.setUp, !requests.isEmpty {
             for (i, r) in requests.enumerated() {
                 let who = r["label"] as? String ?? r["machine"] as? String ?? "A machine"
@@ -1630,25 +1644,19 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
             }
             menu.addItem(.separator())
         }
-        _ = add((panel.isVisible ? "Hide " : "Show ") + (Pref.bubbleMode ? "Bubble" : "Widget"), #selector(toggleShown))
-        if !Pref.bubbleMode { add("Move and Resize", #selector(toggleMoving)).state = moving ? .on : .off }
         if let busy {
-            menu.addItem(.separator())
             menu.addItem(withTitle: busy, action: nil, keyEquivalent: "").isEnabled = false
-        } else if Stats.bundled, !Stats.setUp {
-            menu.addItem(.separator())
-            _ = add("Set Up This Mac…", #selector(setUp))
-        } else if !statsProblems().isEmpty {
-            menu.addItem(.separator())
+        } else if Stats.bundled, !Stats.setUp || !statsProblems().isEmpty {
             _ = add("agent-stats Needs Attention…", #selector(openMachines))
         }
-        menu.addItem(.separator())
+        _ = add(panel.isVisible ? "Hide Bubble" : "Show Bubble", #selector(toggleShown))
         add("Settings…", #selector(openSettings)).keyEquivalent = ","
+        menu.addItem(.separator())
         let quit = menu.addItem(withTitle: "Quit Tokiscope", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         refreshMembers()                                  // for Settings, and the next time
     }
-    // A right click (or ⌃-click) on the widget: the menu, where the pointer is.
+    // A right click (or ⌃-click) on the bubble: the menu, where the pointer is.
     private lazy var contextMenu = NSMenu()
     private func showContextMenu(_ event: NSEvent) {
         fill(contextMenu)
@@ -1656,11 +1664,6 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
 
     @objc private func toggleShown() { panel.isVisible ? panel.orderOut(nil) : panel.orderFrontRegardless() }
-    @objc private func toggleMoving() {
-        moving.toggle()
-        apply()
-        if moving { NSApp.activate(ignoringOtherApps: true); panel.makeKey() }
-    }
     @objc private func reload() { load() }
 
     // Turns one kind of token on or off; the last one left stays on.
@@ -1670,52 +1673,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         Pref.kinds = valid
         load(); syncSettings()
     }
-    private func useLayout(_ i: Int) {
-        guard let l = layouts[i] else { return }
-        Pref.layout = l.key; Pref.customURL = nil
-        load(); fit(); syncSettings()
-    }
-    private func useMode(bubble: Bool) {
-        guard bubble != Pref.bubbleMode else { return }
-        Pref.bubbleMode = bubble; moving = false
-        apply(); load(); fit(); syncSettings()
-    }
-    // Picking a bubble switches to bubble mode.
-    private func useBubble(_ i: Int) {
-        Pref.bubble = bubbles[i].0
-        if Pref.bubbleMode { load() } else { Pref.bubbleMode = true; moving = false; apply(); load(); fit() }
-        syncSettings()
-    }
-    private func useCard(_ i: Int) {
-        Pref.card = cards[i].0
-        if Pref.bubbleMode { load() }
-        syncSettings()
-    }
-    private func useZoom(_ i: Int) {
-        Pref.zoom = zooms[i].1; web.pageZoom = Pref.zoom
-        if Pref.bubbleMode { load() } else { fit() }      // the bubble page asks for its new size once reloaded
-        syncSettings()
-    }
-    private func useSite(_ i: Int) { Pref.site = sites[i].1; Pref.customURL = nil; load(); syncSettings() }
-
-    @objc private func editURL() {
-        let alert = NSAlert()
-        alert.messageText = "Page URL"
-        alert.informativeText = "A page to show instead of a layout. Built-in pages (tokiscope://app/…) read the stats through the app; others need a relay that allows them."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
-        field.stringValue = Pref.customURL ?? Pref.site + layout.path
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Load")
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Use the Layout")
-        NSApp.activate(ignoringOtherApps: true)
-        switch alert.runModal() {
-        case .alertFirstButtonReturn: Pref.customURL = field.stringValue.trimmingCharacters(in: .whitespaces); load()
-        case .alertThirdButtonReturn: Pref.customURL = nil; load()
-        default: break
-        }
-        syncSettings()
-    }
+    // The bubble page asks for its new size once reloaded.
+    private func useZoom(_ i: Int) { Pref.zoom = zooms[i].1; web.pageZoom = Pref.zoom; load(); syncSettings() }
+    private func useSite(_ i: Int) { Pref.site = sites[i].1; load(); syncSettings() }
 
     @objc private func editRelay() {
         let alert = NSAlert()
@@ -1739,7 +1699,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
 
     // ---- Updates ------------------------------------------------------------------------------------------------
-    // A widget is rarely quit, so an update that has downloaded installs and relaunches at once rather than on quit,
+    // The bubble is rarely quit, so an update that has downloaded installs and relaunches at once rather than on quit,
     // unless agent-stats is being set up.
     func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem, immediateInstallationBlock: @escaping () -> Void) -> Bool {
         guard busy == nil else { return false }
@@ -1784,55 +1744,75 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         alert.runModal()
     }
 
-    // First launch (and Set Up This Mac… after): looks for a fleet on the tailnet and the local network, and offers to
-    // join it or to start one. Each Mac of a fleet keeps everyone's stats, so there is no main Mac to pick. With an
-    // agent-stats from before fleets it asks the old question: which Mac runs the hub.
-    @objc private func setUp() {
-        background("Looking for Your Machines…") { [weak self] in
-            let fleet = Stats.hasFleet()
-            let found = fleet ? (try? Stats.json(["fleet", "discover", "--timeout", "3s"], timeout: 30)) as? [[String: Any]] ?? [] : []
-            DispatchQueue.main.async { self?.fleet = fleet; self?.soon { fleet ? self?.offerFleets(found) : self?.offerHub() } }
-            return nil
+    // First launch: Tokiscope counts this Mac's agents straight away, with a hub only this Mac reaches; nothing is
+    // asked. Other machines come in later, from Settings › Machines. Settings opens once, with a welcome. Start
+    // Counting (Settings › Machines) does the same when the first launch couldn't.
+    private func setUpQuietly(welcome: Bool) {
+        background("Starting to Count This Mac's Agents…", { try Stats.becomeHub(); return nil }) { _ in }
+        guard welcome else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard Stats.setUp else { return }
+            Pref.welcome = true
+            self?.openSettings()
         }
     }
+    @objc private func setUp() { setUpQuietly(welcome: false) }
 
-    // The fleets agent-stats found, one entry each (the first machine of it that answered): a Mac's hub to ask.
+    // Settings › Machines: Tokiscope on other Macs nearby (the tailnet, the local network) that keeps another fleet's
+    // stats, so this Mac can join it. Looked for when the tab opens, at most once a minute.
     private struct Found { let fleetId, name, node, url: String }
-    private func offerFleets(_ machines: [[String: Any]]) {
+    private var found: [Found] = [] { didSet { syncSettings() } }
+    private var discovered = Date.distantPast
+    private func discover() {
+        guard fleet == true, Stats.setUp, busy == nil, Date().timeIntervalSince(discovered) > 60 else { return }
+        discovered = Date()
+        DispatchQueue.global().async {
+            let list = (try? Stats.json(["fleet", "discover", "--timeout", "3s"], timeout: 30)) as? [[String: Any]] ?? []
+            DispatchQueue.main.async { self.found = App.fleets(in: list, except: Stats.hubId) }
+        }
+    }
+    // The fleets in `fleet discover`'s list other than `ours`, one entry each (the first machine of it that answered).
+    private static func fleets(in machines: [[String: Any]], except ours: String?) -> [Found] {
         var fleets: [Found] = []
         for m in machines where m["self"] as? Bool != true {
             guard let s = m["agentStats"] as? [String: Any], ["hub", "replica"].contains(s["role"] as? String ?? ""),
-                  let id = s["fleetId"] as? String, let url = s["url"] as? String, !fleets.contains(where: { $0.fleetId == id }) else { continue }
+                  let id = s["fleetId"] as? String, id != ours, let url = s["url"] as? String, !fleets.contains(where: { $0.fleetId == id }) else { continue }
             fleets.append(Found(fleetId: id, name: s["name"] as? String ?? "your fleet", node: s["node"] as? String ?? m["name"] as? String ?? url, url: url))
         }
+        return fleets
+    }
+    // Join Another Mac…: the fleets nearby to pick from, or a Mac's address.
+    private func joinAnother() {
+        background("Looking for Your Machines…") { [weak self] in
+            let list = (try? Stats.json(["fleet", "discover", "--timeout", "3s"], timeout: 30)) as? [[String: Any]] ?? []
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.found = App.fleets(in: list, except: Stats.hubId)
+                self.soon { self.offerFleets(self.found) }
+            }
+            return nil
+        }
+    }
+    private func offerFleets(_ fleets: [Found]) {
         let alert = NSAlert()
-        alert.messageText = "Set Up Tokiscope"
-        alert.informativeText = """
-            Tokiscope shows the tokens your coding agents (Claude Code, Codex and others) use, on every machine you use them on. \
-            Each Mac of your fleet keeps everyone's stats, so none of them has to stay on.
-            """ + (fleets.isEmpty
-                ? "\n\nNo fleet answered on your tailnet or local network. Start one here, then add your other machines in Settings › Machines (Add Machine…)."
-                : fleets.count == 1 ? "\n\nFound “\(fleets[0].name)” on \(fleets[0].node)." : "\n\nFound these fleets:")
+        alert.messageText = "Join Another Mac"
+        alert.informativeText = "This Mac joins the machines another Mac already keeps the stats of: then each shows all of them, and this Mac's stats so far go with it."
+            + (fleets.isEmpty ? "\n\nNo other Mac answered on your tailnet or local network. Give its address instead."
+               : fleets.count == 1 ? "\n\nFound “\(fleets[0].name)” on \(fleets[0].node)." : "\n\nFound these:")
         let pick = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26))
         if fleets.count > 1 {
             pick.addItems(withTitles: fleets.map { "\($0.name) (on \($0.node))" })
             alert.accessoryView = pick
         }
         if !fleets.isEmpty { alert.addButton(withTitle: fleets.count == 1 ? "Join “\(fleets[0].name)”" : "Join") }
-        alert.addButton(withTitle: "Start a New Fleet")
         alert.addButton(withTitle: "Join by Address…")
-        alert.addButton(withTitle: "Later")
+        alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         var r = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
         if fleets.isEmpty { r += 1 }
         switch r {
         case 0: let f = fleets[max(0, pick.indexOfSelectedItem)]; requestJoin(f.url, f.name)
-        case 1:
-            background("Starting a Fleet…") {
-                try Stats.createFleet()
-                return "This Mac keeps your fleet's stats and counts its agents. To add another machine, choose Add Machine… in Settings › Machines."
-            }
-        case 2: joinByAddress()
+        case 1: joinByAddress()
         default: break
         }
     }
@@ -1855,7 +1835,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         Stats.prepareJoin()
         var outcome: String?, said = ""
         busy = "Asking to Join “\(name)”…"
-        let p = Stats.stream(["fleet", "request", url, "--label", Stats.label, "--json"], line: { e in
+        // This Mac's own stats, if it kept any, go into the fleet it joins.
+        let p = Stats.stream(["fleet", "request", url, "--label", Stats.label, "--json"] + (Stats.isHub ? ["--force"] : []), line: { e in
             switch e["state"] as? String {
             case "pending":
                 digits.stringValue = App.spaced(e["digits"] as? String ?? "")
@@ -1885,7 +1866,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
 
     // A Mac of the fleet that discovery didn't find (another network, say): its address, or a line its Add Machine…
-    // showed. Before fleets, only the line.
+    // showed. With an agent-stats from before fleets, only the line.
     private func joinByAddress() {
         let alert = NSAlert()
         alert.messageText = fleet == true ? "Join a Fleet" : "Join Another Mac"
@@ -1913,31 +1894,6 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         requestJoin(url, URL(string: url)?.host ?? url)
     }
 
-    // Before fleets: one Mac runs the hub, the others join it.
-    private func offerHub() {
-        let alert = NSAlert()
-        alert.messageText = "Set Up Tokiscope"
-        alert.informativeText = """
-            Tokiscope shows the tokens your coding agents (Claude Code, Codex and others) use. One Mac keeps the stats: \
-            it runs the hub. Every machine, that one included, counts its own agents and reports them to the hub.
-
-            Use another machine too? Set up the main one first, then add the others from its menu (Add Machine…).
-            """
-        alert.addButton(withTitle: "This Is the Main Mac")
-        alert.addButton(withTitle: "Join Another Mac…")
-        alert.addButton(withTitle: "Later")
-        NSApp.activate(ignoringOtherApps: true)
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            background("Setting Up the Hub…") {
-                try Stats.becomeHub()
-                return "This Mac runs the hub and counts its agents. To add another machine, choose Add Machine… in Settings › Machines."
-            }
-        case .alertSecondButtonReturn: joinByAddress()
-        default: break
-        }
-    }
-
     // An update brought fleets: this Mac becomes a replica (Stats.becomeReplica). Quietly at launch; what went wrong
     // shows in the menu, with Try Again.
     private func becomeReplica(quietly: Bool) {
@@ -1963,6 +1919,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     @objc private func addMachine() {
         // Before fleets machines are added on the main Mac only, with a line to paste.
         guard fleet == true, Stats.isHub else { return addMachineByLine() }
+        // A Mac on its own becomes the first of a fleet, open to your network, once you say so.
+        if !Stats.isReplica {
+            guard confirmOpenHub() else { return }
+            return background("Opening This Mac to Your Machines…", { try Stats.becomeReplica(force: true); return "" }) { [weak self] _ in
+                self?.refreshMembers(); self?.showAddWindow()
+            }
+        }
         if Stats.hubOnLoopback, !confirmOpenHub() { return }
         showAddWindow()
     }
@@ -2025,7 +1988,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         let name = m["label"] as? String ?? machine
         let alert = NSAlert()
         alert.messageText = "Remove \(name) From the Fleet?"
-        alert.informativeText = "Its token stops working on every Mac of the fleet, so it can't report or read anything any more. Its stats so far stay. To add it again later, use Add Machine… in Settings › Machines."
+        alert.informativeText = "Its token stops working on every Mac of the fleet, so it can't report or read anything any more. Its stats so far stay. To add it again later, use Add a Machine… in Settings › Machines."
         alert.addButton(withTitle: "Remove")
         alert.addButton(withTitle: "Cancel")
         alert.buttons[0].hasDestructiveAction = true
@@ -2124,6 +2087,16 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
 
     @objc private func startStats() {
         background("Starting agent-stats…") { try Stats.startAfresh(); return nil }
+    }
+    private func stopStats() {
+        let alert = NSAlert()
+        alert.messageText = "Stop agent-stats?"
+        alert.informativeText = "This Mac stops counting its agents and keeping the stats until you start it again in Settings. Nothing counted so far is lost."
+        alert.addButton(withTitle: "Stop")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        background("Stopping agent-stats…") { try Stats.stop(); return nil }
     }
 
     @objc private func openDashboard() { if let u = URL(string: Stats.localHub + "/") { NSWorkspace.shared.open(u) } }
