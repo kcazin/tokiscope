@@ -1268,12 +1268,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
 
         let size = windowSize(), screen = NSScreen.main?.visibleFrame ?? .zero
         panel = Panel(contentRect: NSRect(x: screen.maxX - size.width - 24, y: screen.minY + 24, width: size.width, height: size.height),
-                      styleMask: [.borderless, .nonactivatingPanel, .resizable], backing: .buffered, defer: false)
+                      styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)   // sized by the page, never by hand
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
-        panel.minSize = NSSize(width: 120, height: 48)
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         panel.setFrameAutosaveName("TokiscopeLayout")
 
