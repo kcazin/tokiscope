@@ -124,7 +124,9 @@ const nice = n => { const e = 10 ** Math.floor(Math.log10(n)), m = n / e; return
 // `rate` is tokens a second over the last 30 s, `history` the rate every 15 s for ten minutes (the last one live),
 // `updated` when the hub last published, `beat` when new tokens last came in. `stale`: the hub hasn't published for two
 // minutes, so nobody is shown working. `source`: 'hub' or 'relay'. `live`: the last update was pushed by a stream.
-export const feed = { today: {}, agents: [], channels: [], rate: 0, history: [], updated: 0, beat: 0, stale: false, source: '', live: false };
+// `ready`: the machines can move, an update having come with an earlier one to compare with (or replaying its last
+// interval); until then a page shows it's loading.
+export const feed = { today: {}, agents: [], channels: [], rate: 0, history: [], updated: 0, beat: 0, stale: false, source: '', live: false, ready: false };
 // A channel hands out units of U tokens per project (`base` when every token counts, scaled to what counts: see
 // above). `arrive(p)` is called for each; the machine calls `delivered(p)` once that unit reaches its project.
 // `count(p)` is the project's tokens today less what is still on its way.
@@ -141,11 +143,24 @@ const updateListeners = [];
 export const onUpdate = f => updateListeners.push(f);
 let prevAll = null, prevAt = 0, day = null, hubAt = 0, relayAt = 0, seen = 0, since = 0, slot = 0, lastTok = {}, spans = [];
 let prevCounted = null;
+// Where the feed was, kept for the page that replaces this one (a new size, another language): it carries on from
+// there instead of waiting for an update to compare with. Only the same source's, the same day's, under two minutes old.
+const KEPT = 'tokiscope.feed';
+function keep(source) {
+  try { sessionStorage.setItem(KEPT, JSON.stringify({ source, day, all: prevAll, counted: prevCounted, at: prevAt, seen, since, history: feed.history, kept: Date.now() })); } catch {}
+}
+function resume(source, d) {
+  let k = null;
+  try { k = JSON.parse(sessionStorage.getItem(KEPT)); } catch {}
+  if (!k || k.source !== source || k.day !== d.today.day || Date.now() - k.kept > 120000 || !k.all) return;
+  prevAll = k.all; prevCounted = k.counted; prevAt = k.at; seen = k.seen; since = k.since; day = k.day; feed.history = k.history || [];
+}
 // Takes one update in the relay's shape; returns how long to wait before asking the relay again. A polled one says
 // what came in over the 15 s since the last; a pushed one (`live`) comes within a second of a change, so its tokens
 // are a turn or two that just finished.
 function ingest(d, source, live = false) {
   if (source !== feed.source) { feed.source = source; prevAll = null; prevCounted = null; prevAt = 0; spans = []; lastTok = {}; }   // totals from the other don't compare
+  if (!prevAll) resume(source, d);
   feed.stale = !!d.stale || Date.now() - d.updated > 120000;
   if (feed.stale) feed.agents = [];
   if (d.updated === prevAt && Object.keys(d.projects.all).every(k => d.projects.all[k] === prevAll[k])) return feed.stale ? 15000 : 2500;
@@ -192,6 +207,8 @@ function ingest(d, source, live = false) {
   // one agent's turns run into each other and many agents' make a steady stream, with no 15 s bursts.
   const gap = first ? 15000 : Math.max(5000, Math.min(60000, d.updated - prevAt));
   feed.updated = d.updated; prevAll = d.projects.all; prevAt = d.updated; seen = now;
+  if (!first || !live) feed.ready = true;
+  keep(source);
   for (const p of PROJECTS) {
     if (!delta[p]) continue;
     const w = live && !first ? Math.max(2000, Math.min(8000, now - (lastTok[p] ?? 0))) : gap;

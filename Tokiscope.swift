@@ -1633,7 +1633,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         case "language":
             guard ["auto", "en", "ja"].contains(key), key != Pref.language else { return }
             Pref.language = key
-            load()
+            restyle()                                   // the bubble's text changes in place, its stats kept
             settingsWindow?.title = L("Tokiscope Settings")
             loadSettings("general")
             syncSettings()
@@ -1712,10 +1712,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
 
     @objc private func toggleShown() { panel.isVisible ? panel.orderOut(nil) : panel.orderFrontRegardless() }
     @objc private func reload() { load() }
-    // The bubble, what it opens into, the tokens counted and the backdrop change in the page as it is (lab/bubble.html
-    // window.bubble.set), keeping the stats it has; the next load reads them from the URL.
+    // The bubble, what it opens into, the tokens counted, the backdrop and the language change in the page as it is
+    // (lab/bubble.html window.bubble.set), keeping the stats it has; the next load reads them from the URL.
     private func restyle() {
-        guard let data = try? JSONSerialization.data(withJSONObject: ["b": Pref.bubble, "open": Pref.open, "kinds": Pref.kinds, "scene": Pref.scene]) else { return load() }
+        guard let data = try? JSONSerialization.data(withJSONObject: ["b": Pref.bubble, "open": Pref.open, "kinds": Pref.kinds, "scene": Pref.scene, "lang": Lang.code]) else { return load() }
         web.evaluateJavaScript("window.bubble.set(\(String(decoding: data, as: UTF8.self)))") { [weak self] _, error in if error != nil { self?.load() } }
     }
 

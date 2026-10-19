@@ -36,6 +36,7 @@
   import { MACHINES } from './lab.js';
   import { setKinds } from './flow.js';
   import { setScene } from './scene.js';
+  import { LANG, setLang } from './i18n.js';
   const q = new URLSearchParams(location.search), one = q.get('b');
   const open = isCard(q.get('open')) || MACHINES[q.get('open')] ? q.get('open') : 'haul';
   if (one && BUBBLES[one]) {
@@ -48,10 +49,12 @@
     window.bubble = {
       hover: on => b.hover(on), toggle: () => b.toggle(),
       anchor(t, l) { corner = [t, l]; b.anchor(t, l); },
-      set({ b: s, open: o, kinds, scene }) {
+      set({ b: s, open: o, kinds, scene, lang }) {
         if (kinds) setKinds(kinds);
         if (scene) setScene(scene);
-        if ((s && BUBBLES[s] && s !== style) || (o && o !== what && (isCard(o) || MACHINES[o]))) {
+        const relang = lang && lang !== LANG;
+        if (relang) setLang(lang);
+        if (relang || (s && BUBBLES[s] && s !== style) || (o && o !== what && (isCard(o) || MACHINES[o]))) {
           const wasOpen = b.isOpen;
           style = BUBBLES[s] ? s : style; what = isCard(o) || MACHINES[o] ? o : what;
           b.stop(); make(wasOpen);

@@ -344,11 +344,10 @@ export function bubble(root, { style = 'orb', open: what = 'haul', app = false, 
   const glow = { step() {}, draw(t) {
     ctx.clearRect(0, 0, D, D);
     view.draw(Math.min(0.05, t - (glow.t ?? t)), t); glow.t = t;
-    const loading = !feed.updated;
-    if (loading !== shell.classList.contains('loading')) {
-      shell.classList.toggle('loading', loading);
-      if (loading) artEl.append(wait); else wait.remove();
-    }
+    // The ring turns till the machines can move; the field's cover lifts as soon as there are figures to show.
+    const loading = !feed.ready;
+    shell.classList.toggle('loading', loading);
+    if (!feed.updated !== wait.isConnected) { if (!feed.updated) artEl.append(wait); else wait.remove(); }
     if (loading && performance.now() - born > 15000) wait.textContent = say('Waiting for agent-stats…');
   } };
   const stop = run(layout ? [[artEl, layout]] : [], cv ? [glow, cv] : [glow]);
