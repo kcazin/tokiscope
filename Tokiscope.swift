@@ -1,7 +1,7 @@
 // Tokiscope: your agents at work (the machines carrying today's tokens) and the projects they go to, in a small window
 // that floats over the desktop. It shows one of the layouts in lab/ (?only=<layout>), from the copy bundled in the app
-// (BundlePages) or a local copy. A menu bar item picks the layout and its zoom, and sets the rest:
-// click-through, move and resize, background, above windows or on the desktop. The stats come from the hub the app
+// (BundlePages) or a local copy. A menu, from the menu bar or a right click on the widget, picks the layout and its
+// size, and sets the rest: click-through, move and resize, background, above windows or on the desktop. The stats come from the hub the app
 // runs on this Mac (Stats): every Mac of the fleet runs one and keeps everyone's stats, so every repository shows by
 // name (HubFeed), even while the other Macs sleep; or from a relay, when one is set and no hub can be reached
 // (RelayFeed). Both are streamed, so a change shows within a second or two, and polled when there is no stream.
@@ -75,6 +75,14 @@ final class Panel: NSPanel {
     // No nudging below the menu bar: the app keeps what shows on screen itself, and the transparent margin round it
     // may go behind the menu bar so the bubble can sit right against it.
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    // A right click or ⌃-click anywhere on it is for the app's menu, not the page's.
+    var onMenu: ((NSEvent) -> Void)?
+    override func sendEvent(_ event: NSEvent) {
+        if let onMenu, event.type == .rightMouseDown || (event.type == .leftMouseDown && event.modifierFlags.contains(.control)) {
+            return onMenu(event)
+        }
+        super.sendEvent(event)
+    }
 }
 
 // Covers the page while moving: drag anywhere to move, drag the edges to resize.
@@ -1232,6 +1240,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         root.addSubview(handle)
         root.addSubview(mover)
         panel.contentView = root
+        panel.onMenu = { [weak self] in self?.showContextMenu($0) }
 
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "box.truck", accessibilityDescription: "Tokiscope")
@@ -1417,6 +1426,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         pointerTimer = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in self?.checkPointer() }
     }
     private func checkPointer() {
+        // A click-through widget takes the pointer only while ⌃ is held over it, for its menu.
+        if !Pref.bubbleMode {
+            let take = panel.isVisible && NSEvent.modifierFlags.contains(.control) && panel.frame.contains(NSEvent.mouseLocation)
+            if panel.ignoresMouseEvents == take { panel.ignoresMouseEvents = !take }
+            return
+        }
         // Until the page reports, the bubble's own corner counts.
         let p = NSEvent.mouseLocation, f = panel.frame, z = Pref.zoom
         let hot = hotRects.isEmpty ? [NSRect(x: 10, y: 10, width: 64, height: 64)] : hotRects
@@ -1440,7 +1455,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         panel.level = Pref.onDesktop ? NSWindow.Level(Int(CGWindowLevelForKey(.desktopIconWindow)) + 1) : .floating
         let bubble = Pref.bubbleMode
         panel.ignoresMouseEvents = bubble || (Pref.clickThrough && !moving)
-        watchPointer(bubble)
+        watchPointer(bubble || (Pref.clickThrough && !moving))
         glass.isHidden = bubble || !Pref.glass
         root.layer?.cornerRadius = bubble ? 0 : 12
         handle.isHidden = !bubble || moving
@@ -1507,23 +1522,18 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
 
     // ---- Menu ---------------------------------------------------------------------------------------------------
-    func menuNeedsUpdate(_ menu: NSMenu) {
+    // The same menu from the menu bar and from a right click on the widget: join requests first (they wait on you),
+    // then the widget, what it looks like, the fleet, the app.
+    func menuNeedsUpdate(_ menu: NSMenu) { fill(menu) }
+    private func fill(_ menu: NSMenu) {
         menu.removeAllItems()
-        let add = { (title: String, on: Bool, action: Selector) -> NSMenuItem in
+        let add = { (menu: NSMenu, title: String, on: Bool, action: Selector) -> NSMenuItem in
             let i = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
             i.target = self
             i.state = on ? .on : .off
             return i
         }
-        _ = add(panel.isVisible ? "Hide" : "Show", false, #selector(toggleShown))
-        menu.addItem(.separator())
-        _ = add("Move and Resize", moving, #selector(toggleMoving))
-        if !Pref.bubbleMode {
-            _ = add("Click Through", Pref.clickThrough, #selector(toggleClickThrough))
-            _ = add("Dark Glass Background", Pref.glass, #selector(toggleGlass))
-        }
-        _ = add("On the Desktop (Behind Windows)", Pref.onDesktop, #selector(toggleDesktop))
-        let submenu = { (title: String, fill: (NSMenu) -> Void) in
+        let submenu = { (menu: NSMenu, title: String, fill: (NSMenu) -> Void) in
             let sub = NSMenu()
             fill(sub)
             menu.addItem(withTitle: title, action: nil, keyEquivalent: "").submenu = sub
@@ -1534,77 +1544,111 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
             it.tag = tag
             it.state = on ? .on : .off
         }
+        let ready = busy == nil && Stats.setUp
+        if ready, !requests.isEmpty {
+            for (i, r) in requests.enumerated() {
+                let who = r["label"] as? String ?? r["machine"] as? String ?? "A machine"
+                add(menu, "\(who) Asks to Join (\(App.spaced(r["digits"] as? String ?? "")))…", false, #selector(askRequest(_:))).tag = i
+            }
+            menu.addItem(.separator())
+        }
+
+        // The widget.
+        let what = Pref.bubbleMode ? "Bubble" : "Widget"
+        _ = add(menu, (panel.isVisible ? "Hide " : "Show ") + what, false, #selector(toggleShown))
+        _ = add(menu, "Move and Resize", moving, #selector(toggleMoving))
         menu.addItem(.separator())
-        submenu("Mode") { sub in
-            pick(sub, "Widget", !Pref.bubbleMode, 0, #selector(setMode(_:)))
-            pick(sub, "Bubble", Pref.bubbleMode, 1, #selector(setMode(_:)))
-        }
-        submenu("Bubble") { sub in
-            for (i, (_, name)) in bubbles.enumerated() { pick(sub, name, Pref.bubbleMode && Pref.bubble == bubbles[i].0, i, #selector(setBubble(_:))) }
-        }
+
+        // What it looks like.
+        pick(menu, "As a Widget", !Pref.bubbleMode, 0, #selector(setMode(_:)))
+        pick(menu, "As a Bubble", Pref.bubbleMode, 1, #selector(setMode(_:)))
         if Pref.bubbleMode {
-            submenu("Card on Hover") { sub in
+            submenu(menu, "Bubble") { sub in
+                for (i, (key, name)) in bubbles.enumerated() { pick(sub, name, Pref.bubble == key, i, #selector(setBubble(_:))) }
+            }
+            submenu(menu, "Card on Hover") { sub in
                 for (i, (key, name)) in cards.enumerated() { pick(sub, name, Pref.card == key, i, #selector(setCard(_:))) }
             }
         }
-        submenu("Count Tokens") { sub in
-            for (i, (key, name)) in tokenKinds.enumerated() { pick(sub, name, Pref.kinds.contains(key), i, #selector(toggleKind(_:))) }
-        }
-        submenu(Pref.bubbleMode ? "Opens on Click" : "Layout") { sub in
+        submenu(menu, Pref.bubbleMode ? "Opens on Click" : "Layout") { sub in
             for (i, l) in layouts.enumerated() {
                 guard let l else { sub.addItem(.separator()); continue }
                 if Pref.bubbleMode && !l.padded { continue }
                 pick(sub, l.name, Pref.customURL == nil && l.key == Pref.layout, i, #selector(setLayout(_:)))
             }
         }
-        submenu("Zoom") { sub in
+        submenu(menu, "Size") { sub in
             for (i, (name, z)) in zooms.enumerated() { pick(sub, "\(name) (\(z == 1 ? "1" : String(format: "%g", z))×)", Pref.zoom == z, i, #selector(setZoom(_:))) }
         }
-        submenu("Load From") { sub in
-            for (i, (name, url)) in sites.enumerated() { pick(sub, name, Pref.site == url, i, #selector(setSite(_:))) }
-            sub.addItem(.separator())
-            pick(sub, "Other Page URL…", Pref.customURL != nil, 0, #selector(editURL))
-            pick(sub, "Other Stats Relay…", Pref.relay != nil, 0, #selector(editRelay))
-            sub.addItem(.separator())
-            sub.addItem(withTitle: (hub.route.map { "Stats From the Hub, \(URL(string: $0.url)?.host ?? $0.url)" }
-                                    ?? (Pref.relay != nil ? "Stats From the Relay (No Hub)" : "No Stats: No Hub Answers"))
-                        + ((hub.route != nil ? hub.live : relay.live) ? ", Live" : ""),
-                        action: nil, keyEquivalent: "").isEnabled = false
+        submenu(menu, "Count Tokens") { sub in
+            for (i, (key, name)) in tokenKinds.enumerated() { pick(sub, name, Pref.kinds.contains(key), i, #selector(toggleKind(_:))) }
         }
-        menu.addItem(.separator())
-        if let busy { menu.addItem(withTitle: busy, action: nil, keyEquivalent: "").isEnabled = false }
-        else if Stats.bundled || Stats.setUp {
-            if !Stats.setUp { _ = add("Set Up This Mac…", false, #selector(setUp)) }
+        submenu(menu, "Window") { sub in
+            pick(sub, "Above Windows", !Pref.onDesktop, 0, #selector(setDesktop(_:)))
+            pick(sub, "On the Desktop (Behind Windows)", Pref.onDesktop, 1, #selector(setDesktop(_:)))
+            if !Pref.bubbleMode {
+                sub.addItem(.separator())
+                _ = add(sub, "Dark Glass Background", Pref.glass, #selector(toggleGlass))
+                _ = add(sub, "Click Through", Pref.clickThrough, #selector(toggleClickThrough))
+                if Pref.clickThrough { self.sub(sub, "Hold ⌃ and Click the Widget for This Menu") }
+            }
+        }
+
+        // The fleet: what needs doing first, then its machines.
+        if let busy {
+            menu.addItem(.separator())
+            sub(menu, busy)
+        } else if Stats.bundled || Stats.setUp {
+            menu.addItem(.separator())
+            if !Stats.setUp { _ = add(menu, "Set Up This Mac…", false, #selector(setUp)) }
             else {
-                for (i, r) in requests.enumerated() {
-                    let who = r["label"] as? String ?? r["machine"] as? String ?? "A machine"
-                    add("\(who) Asks to Join (\(App.spaced(r["digits"] as? String ?? "")))…", false, #selector(askRequest(_:))).tag = i
-                }
-                _ = add("Add Machine…", false, #selector(addMachine))
-                if fleet == true, Stats.isReplica { submenu("Machines") { sub in fillMachines(sub) } }
                 if let replicaError {
                     sub(menu, "This Mac Isn't a Replica Yet: \(replicaError.prefix(80))")
-                    _ = add("Try Again to Make This Mac a Replica", false, #selector(retryReplica))
+                    _ = add(menu, "Try Again to Make This Mac a Replica", false, #selector(retryReplica))
                 }
-                if Stats.isHub { _ = add(fleet == true ? "Open the Dashboard" : "Open the Hub's Dashboard", false, #selector(openDashboard)) }
-                if Stats.bundled, !Stats.separate.filter({ $0 != "relay" }).isEmpty { _ = add("Let Tokiscope Run agent-stats…", false, #selector(takeOver)) }
-                if Stats.bundled, Stats.stopped { _ = add("Start agent-stats", false, #selector(startStats)) }
+                if Stats.bundled, !Stats.separate.filter({ $0 != "relay" }).isEmpty { _ = add(menu, "Let Tokiscope Run agent-stats…", false, #selector(takeOver)) }
+                if Stats.bundled, Stats.stopped { _ = add(menu, "Start agent-stats", false, #selector(startStats)) }
+                submenu(menu, "Machines") { sub in
+                    if fleet == true, Stats.isReplica { fillMachines(sub); sub.addItem(.separator()) }
+                    _ = add(sub, "Add Machine…", false, #selector(addMachine))
+                    if Stats.isHub { _ = add(sub, fleet == true ? "Open the Dashboard" : "Open the Hub's Dashboard", false, #selector(openDashboard)) }
+                    sub.addItem(.separator())
+                    self.sub(sub, Stats.summary(statsVersion))
+                }
             }
-            menu.addItem(withTitle: Stats.summary(statsVersion), action: nil, keyEquivalent: "").isEnabled = false
         }
+
+        // The app.
         menu.addItem(.separator())
-        let settings = add("Settings…", false, #selector(openSettings))
+        let settings = add(menu, "Settings…", false, #selector(openSettings))
         settings.keyEquivalent = ","
-        _ = add("Reload", false, #selector(reload))
-        _ = add("Open at Login", SMAppService.mainApp.status == .enabled, #selector(toggleLogin))
+        _ = add(menu, "Open at Login", SMAppService.mainApp.status == .enabled, #selector(toggleLogin))
         if let updates {
             let check = menu.addItem(withTitle: "Check for Updates…", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
             check.target = updates
+        }
+        submenu(menu, "Advanced") { sub in
+            self.sub(sub, "Load the Pages From")
+            for (i, (name, url)) in sites.enumerated() { pick(sub, name, Pref.site == url, i, #selector(setSite(_:))) }
+            pick(sub, "Other Page URL…", Pref.customURL != nil, 0, #selector(editURL))
+            sub.addItem(.separator())
+            pick(sub, "Other Stats Relay…", Pref.relay != nil, 0, #selector(editRelay))
+            self.sub(sub, (hub.route.map { "Stats From the Hub, \(URL(string: $0.url)?.host ?? $0.url)" }
+                           ?? (Pref.relay != nil ? "Stats From the Relay (No Hub)" : "No Stats: No Hub Answers"))
+                     + ((hub.route != nil ? hub.live : relay.live) ? ", Live" : ""))
+            sub.addItem(.separator())
+            _ = add(sub, "Reload", false, #selector(reload))
         }
         menu.addItem(.separator())
         let quit = menu.addItem(withTitle: "Quit Tokiscope", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         refreshMembers()                                  // for the next time the menu opens
+    }
+    // A right click (or ⌃-click) on the widget: the menu, where the pointer is.
+    private lazy var contextMenu = NSMenu()
+    private func showContextMenu(_ event: NSEvent) {
+        fill(contextMenu)
+        NSMenu.popUpContextMenu(contextMenu, with: event, for: root)
     }
     // A line that only says something.
     private func sub(_ menu: NSMenu, _ title: String) { menu.addItem(withTitle: title, action: nil, keyEquivalent: "").isEnabled = false }
@@ -1636,7 +1680,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
     @objc private func toggleClickThrough() { Pref.clickThrough.toggle(); apply() }
     @objc private func toggleGlass() { Pref.glass.toggle(); apply() }
-    @objc private func toggleDesktop() { Pref.onDesktop.toggle(); apply() }
+    @objc private func setDesktop(_ sender: NSMenuItem) { Pref.onDesktop = sender.tag == 1; apply() }
     @objc private func reload() { load() }
 
     @objc private func setLayout(_ sender: NSMenuItem) { useLayout(sender.tag) }
