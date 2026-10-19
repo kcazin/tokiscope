@@ -12,7 +12,7 @@
      General: login, updates, where the pages and stats come from. The app is told what was picked or asked for through
      `pick` ({ kind, key }; kind "do" for an action), and tells the page its whole state through window.settings.set.
      In a browser it only previews the Look tab. ?mode=widget|bubble&b=<bubble>&card=<card>&layout=<layout>
-     &kinds=<in,cr,cw,out>&scene=<city>&tab=look|machines|general says what is in use. */
+     &kinds=<in,cr,cw,out>&scene=<place>&tab=look|machines|general says what is in use. */
   :root { --accent: #e2502b; }
   body { margin: 0; color: #e8e8e8; font: 400 .8125rem/1.45 "Schibsted Grotesk", system-ui, sans-serif; background: #141414;
     -webkit-user-select: none; user-select: none; }
@@ -84,7 +84,7 @@
   import { bubble, BUBBLES, CARDS } from './bubble.js';
   import { run, MACHINES } from './lab.js';
   import { setKinds } from './flow.js';
-  import { CITIES, cityOf, setScene } from './scene.js';
+  import { PLACES, placeOf, setScene } from './scene.js';
   const q = new URLSearchParams(location.search);
   const state = { mode: q.get('mode') === 'widget' ? 'widget' : 'bubble', b: q.get('b') || 'orb', card: q.get('card') || 'classic', layout: q.get('layout') || 'haul',
     kinds: (q.get('kinds') || 'in,cr,cw,out').split(','), scene: q.get('scene') || 'auto', tab: q.get('tab') || 'look',
@@ -105,9 +105,9 @@
         <div class="row"><b>Show as</b>${seg('mode', [['widget', 'Widget'], ['bubble', 'Bubble']])}</div>
         <div class="row"><b>Size</b><span id="zooms"></span></div>
         <div class="row"><b>Count</b><div class="kinds">${KINDS.map(([k, name]) => `<button data-k="${k}">${name}</button>`).join('')}</div></div>
-        <div class="row"><b>Backdrop</b><select id="scene"><option value="auto">Where you are: ${esc(cityOf().name)}</option>
-          ${Object.values(CITIES).sort((a, b) => a.name.localeCompare(b.name)).map(c => `<option value="${c.key}">${esc(c.name)}</option>`).join('')}
-          <option value="off">None</option></select><span class="hint">Behind the trucks, under the sky there now.</span></div>
+        <div class="row"><b>Backdrop</b><select id="scene"><option value="auto">Where you are: ${esc(placeOf().name)}</option>
+          ${Object.values(PLACES).sort((a, b) => a.name.localeCompare(b.name)).map(c => `<option value="${c.key}">${esc(c.name)}</option>`).join('')}
+          <option value="off">None</option></select><span class="hint">Landmarks of your time zone behind the trucks, under the sky there now.</span></div>
         <div class="row"><b>Sits</b>${seg('desktop', [['0', 'Above windows'], ['1', 'On the desktop']])}</div>
         <div class="row widget-only"><b>Dark glass</b>${toggle('glass')}<span class="hint">A dark background behind the layout.</span></div>
         <div class="row widget-only"><b>Click through</b>${toggle('clickThrough')}<span class="hint">Clicks go to what's under the widget; hold ⌃ and click it for its menu.</span></div>
