@@ -69,10 +69,11 @@ function setProjects(d) {
 // The hub's private view, in the relay's shape: the projects worked on today or right now. Sessions with no
 // repository count as `other`. `active`: when each project's sessions were last busy, for a page that just opened.
 function fromHub(state, repos) {
-  const all = {}, today = {}, active = {}, of = new Map();
+  const all = {}, today = {}, active = {}, of = new Map(), todayIo = {};
   for (const r of repos) {
     const k = r.project || r.repo;
     of.set(r.repo, k); all[k] = (all[k] || 0) + r.tokensAll; today[k] = (today[k] || 0) + r.tokensToday;
+    if (r.ioToday) { const t = todayIo[k] ??= { in: 0, cr: 0, cw: 0, out: 0 }; for (const x of KINDS) t[x] += r.ioToday[x] || 0; }
   }
   const sessions = state.sessions || [], busy = s => s.working ?? state.now - s.lastActivity < 60000;
   const project = s => of.get(s.repo) || s.repo || 'other';
@@ -84,20 +85,50 @@ function fromHub(state, repos) {
   const keys = [...new Set([...Object.keys(today).filter(k => today[k] > 0), ...agents.map(a => a.project)])];
   return {
     updated: state.now, listed: true, live: { agents }, today: { day: new Date(state.now).toLocaleDateString('en-CA') },
-    projects: { all, today, last: {}, active },
+    projects: { all, today, last: {}, active, todayIo },
     projectList: keys.map(k => ({ key: k, name: k === 'other' ? 'Other' : null })),
   };
 }
+
+// ---- What counts -----------------------------------------------------------------------------------------------
+// The tokens that count (?kinds=, Settings): any of fresh input, cache reads, cache writes and output, all by default.
+// From agent-stats 0.7 each project's tokens today come split by kind (`projects.todayIo`), so everything counts only
+// those; without a split (an older hub or relay) it counts them all. A unit (a square, a crate) is worth its machine's
+// base amount times the share of today's tokens that count, rounded to 1, 2 or 5, so the machines stay about as busy.
+export const KINDS = ['in', 'cr', 'cw', 'out'];
+export const KIND = { in: 'input', cr: 'cache read', cw: 'cache write', out: 'output' };
+// `split`: the last update had one, so the kinds are what counts.
+export const counting = { kinds: KINDS, split: false, share: 1 };
+const everything = () => counting.kinds.length === KINDS.length;
+const splitOf = d => { const io = d.projects?.todayIo; return io && Object.keys(io).length ? io : null; };
+// Each project's tokens today that count.
+export function countedToday(d) {
+  const today = d.projects.today || {}, io = splitOf(d);
+  if (everything() || !io) return { ...today };
+  return Object.fromEntries([...new Set([...Object.keys(today), ...Object.keys(io)])]
+    .map(p => [p, counting.kinds.reduce((n, k) => n + (io[p]?.[k] || 0), 0)]));
+}
+// What counts, for a label: 'tokens' when it's all of them, else the kinds ('output', 'in + out').
+export const countedWhat = () => everything() || !counting.split ? 'tokens'
+  : counting.kinds.length === 1 ? KIND[counting.kinds[0]] : counting.kinds.join(' + ');
+export function setCounting(list) {
+  const k = KINDS.filter(x => list.includes(x));
+  counting.kinds = k.length ? k : KINDS;
+  prevCounted = null;
+  for (const c of feed.channels) Object.assign(c, { U: 0, carry: {}, owed: {}, shown: {}, queue: [] });   // counted afresh
+}
+const nice = n => { const e = 10 ** Math.floor(Math.log10(n)), m = n / e; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * e; };
 
 // ---- Feed ------------------------------------------------------------------------------------------------------
 // `rate` is tokens a second over the last 30 s, `history` the rate every 15 s for ten minutes (the last one live),
 // `updated` when the hub last published, `beat` when new tokens last came in. `stale`: the hub hasn't published for two
 // minutes, so nobody is shown working. `source`: 'hub' or 'relay'. `live`: the last update was pushed by a stream.
 export const feed = { today: {}, agents: [], channels: [], rate: 0, history: [], updated: 0, beat: 0, stale: false, source: '', live: false };
-// A channel hands out units of U tokens per project. `arrive(p)` is called for each; the machine calls `delivered(p)`
-// once that unit reaches its project. `count(p)` is the project's tokens today less what is still on its way.
-export function channel(U, cap = 200) {
-  const c = { U, cap, carry: {}, owed: {}, shown: {}, queue: [], arrive: () => {} };
+// A channel hands out units of U tokens per project (`base` when every token counts, scaled to what counts: see
+// above). `arrive(p)` is called for each; the machine calls `delivered(p)` once that unit reaches its project.
+// `count(p)` is the project's tokens today less what is still on its way.
+export function channel(base, cap = 200) {
+  const c = { base, U: 0, cap, carry: {}, owed: {}, shown: {}, queue: [], arrive: () => {} };
   c.delivered = p => { c.owed[p] = Math.max(0, (c.owed[p] || 0) - 1); };
   c.count = p => (c.shown[p] = Math.max(c.shown[p] || 0, (feed.today[p] || 0) - (c.owed[p] || 0) * c.U));
   feed.channels.push(c);
@@ -108,11 +139,12 @@ export function channel(U, cap = 200) {
 const updateListeners = [];
 export const onUpdate = f => updateListeners.push(f);
 let prevAll = null, prevAt = 0, day = null, hubAt = 0, relayAt = 0, seen = 0, since = 0, slot = 0, lastTok = {}, spans = [];
+let prevCounted = null;
 // Takes one update in the relay's shape; returns how long to wait before asking the relay again. A polled one says
 // what came in over the 15 s since the last; a pushed one (`live`) comes within a second of a change, so its tokens
 // are a turn or two that just finished.
 function ingest(d, source, live = false) {
-  if (source !== feed.source) { feed.source = source; prevAll = null; prevAt = 0; spans = []; lastTok = {}; }   // totals from the other don't compare
+  if (source !== feed.source) { feed.source = source; prevAll = null; prevCounted = null; prevAt = 0; spans = []; lastTok = {}; }   // totals from the other don't compare
   feed.stale = !!d.stale || Date.now() - d.updated > 120000;
   if (feed.stale) feed.agents = [];
   if (d.updated === prevAt && Object.keys(d.projects.all).every(k => d.projects.all[k] === prevAll[k])) return feed.stale ? 15000 : 2500;
@@ -126,13 +158,27 @@ function ingest(d, source, live = false) {
   keepSeen(d.updated);
   setProjects(d);
   const now = Date.now(), at = performance.now(), first = !prevAll;
-  if (d.today.day !== day) { day = d.today.day; for (const c of feed.channels) c.shown = {}; }
-  feed.today = { ...d.projects.today }; feed.agents = feed.stale ? [] : d.live.agents || []; feed.live = live;
+  const io = splitOf(d), some = !everything() && !!io, counted = countedToday(d);
+  if (d.today.day !== day) {
+    if (day && prevCounted) prevCounted = Object.fromEntries(Object.keys(prevCounted).map(p => [p, 0]));   // a new day starts from nothing
+    day = d.today.day; for (const c of feed.channels) c.shown = {};
+  }
+  // The share of today's tokens that count: from the split, or as a whole.
+  const all4 = io ? Object.values(io).reduce((n, v) => n + KINDS.reduce((m, k) => m + (v[k] || 0), 0), 0) : 0;
+  counting.split = !!io;
+  counting.share = some && all4 ? Math.max(1e-4, Object.values(counted).reduce((a, b) => a + b, 0) / all4) : 1;
+  for (const c of feed.channels) if (!c.U) c.U = nice(Math.max(1, c.base * counting.share));
+  feed.today = counted; feed.agents = feed.stale ? [] : d.live.agents || []; feed.live = live;
   for (const f of updateListeners) f(d, source, live);
   // A key that wasn't there last time has nothing to compare with: its tokens so far are counted, not hauled.
   // A polled first update replays the relay's last interval, so the machines start working straight away (a pushed
   // one doesn't: the next pushes come within seconds, and it would show those tokens twice as fast).
-  const delta = prevAll ? Object.fromEntries(PROJECTS.map(p => [p, p in prevAll ? Math.max(0, (d.projects.all[p] || 0) - prevAll[p]) : 0])) : live ? {} : { ...d.projects.last };
+  // With only some kinds counting, the growth of what counts today; replayed, the last interval's tokens in their share.
+  const delta = some
+    ? prevCounted ? Object.fromEntries(PROJECTS.map(p => [p, p in prevCounted ? Math.max(0, (counted[p] || 0) - prevCounted[p]) : 0]))
+      : live ? {} : Object.fromEntries(Object.entries(d.projects.last || {}).map(([p, n]) => [p, n * counting.share]))
+    : prevAll ? Object.fromEntries(PROJECTS.map(p => [p, p in prevAll ? Math.max(0, (d.projects.all[p] || 0) - prevAll[p]) : 0])) : live ? {} : { ...d.projects.last };
+  prevCounted = counted;
   const total = PROJECTS.reduce((n, p) => n + (delta[p] || 0), 0);
   // The rate on a fixed time base: each update's tokens over the time it covers, summed over the last 30 s.
   const from = first ? now - (live ? 1000 : d.projects.lastMs || 15000) : Math.max(seen, now - 60000);
@@ -743,7 +789,7 @@ export function haul(el, opt) {
       ctx.fillStyle = `rgba(232, 232, 232, ${feed.stale ? .45 : .75})`; ctx.textAlign = 'right';
       ctx.fillText(feed.stale ? 'not live' : `${n} agent${n === 1 ? '' : 's'}`, W - 6 - Math.max(1, ag.length) * 4 - 2, 9);
       ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(232, 232, 232, .6)'; ctx.fillRect(4, 8, S - 1, S - 1);
-      ctx.fillStyle = 'rgba(232, 232, 232, .45)'; ctx.fillText('= 50K tokens', 9, 9);
+      ctx.fillStyle = 'rgba(232, 232, 232, .45)'; ctx.fillText(`= ${short(ch.U || ch.base)} ${countedWhat()}`, 9, 9);
       // Pile, squares in the air, the truck.
       for (let i = 0; i < cols; i++) stack[i].forEach((c, k) => sq(colX(i), ground - (k + 1) * S, c));
       for (const a of air) sq(a.x, a.y, a.c);

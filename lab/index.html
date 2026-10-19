@@ -31,8 +31,9 @@
 <body>
 <script type="module">
   import { run, MACHINES, PROJECTS, NAMES, RGB } from './lab.js';
-  import './flow.js';                  // the throughput layouts: the trucks at speed, the dashboard and its pieces
+  import { demo } from './flow.js';    // the throughput layouts: the trucks at speed, the dashboard and its pieces
   const only = new URLSearchParams(location.search).get('only');
+  demo();                               // ?relay=demo: made-up agents
   if (only && MACHINES[only]) {
     document.documentElement.classList.add('only');
     const el = document.createElement('div'); document.body.append(el);

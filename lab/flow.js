@@ -4,7 +4,7 @@
 // since the last ones came in (2.5–8 s; 15 s when polled), so everything below runs at the rate the tokens were made
 // instead of jumping once a second. The pieces here are shown by flow.html; the bubbles, cards and fields built from
 // them by bubble.js, and two fields join the lab's MACHINES (a dashboard, and the trucks at speed).
-import { run, feed, onUpdate, haul, HAUL, haulH, MACHINES, PROJECTS, SHORT, RGB, shade, MONO } from './lab.js';
+import { run, feed, onUpdate, haul, HAUL, haulH, MACHINES, PROJECTS, SHORT, RGB, shade, MONO, KINDS, KIND, countedToday, setCounting } from './lab.js';
 
 // ---- The flow ----------------------------------------------------------------------------------------------------
 // Spreads: { a, b, n, p } a project's new tokens over [a, b) (performance.now ms); { a, b, n, o, id, p } an agent's
@@ -17,14 +17,15 @@ const over = (since, live) => live ? Math.max(2500, Math.min(8000, since)) : 150
 // tokens today as published and `shown` less what is still being handed out, `history` the rate every half second
 // for a minute, `turns` the last minute's turns ({ at, p, n }). `agents`: id → { project, model, state, io, rate, out,
 // on (working now), first (seen), last (its last turn) and lastN (that turn's tokens) }.
-// `kinds`: the tokens that count (?kinds=in,cr,cw,out, all by default). With all of them, the totals and rates are the
-// projects'; with some, they're the agents' turns, kind by kind, and `total` counts them from `since` (output alone
-// from the relay's count for today). `what` names them ('' for all), `label` says what `total` is.
-const KINDS = ['in', 'cr', 'cw', 'out'], KIND = { in: 'input', cr: 'cache read', cw: 'cache write', out: 'output' };
+// `kinds`: the tokens that count (?kinds=in,cr,cw,out, all by default; lab.js counts them). With all of them, or with
+// some and an agent-stats that splits each project's tokens by kind (0.7 on), the totals and rates are the projects';
+// otherwise they're the agents' turns, kind by kind, and `total` counts them from `since` (output alone from the
+// relay's count for today). `what` names them ('' for all), `label` says what `total` is.
 export const flow = { rate: 0, out: 0, of: {}, total: 0, shown: 0, history: [], turns: [], agents: new Map(), kinds: KINDS, what: '', label: 'TOKENS TODAY', when: 'today', since: 0 };
 export function setKinds(list) {
   const k = KINDS.filter(x => list.includes(x));
   flow.kinds = k.length ? k : KINDS;
+  setCounting(flow.kinds);
   flow.what = flow.kinds.length === 4 ? '' : flow.kinds.map(x => KIND[x]).join(' + ');
   base = null; flow.history = []; flow.turns = []; flow.rate = flow.out = 0; flow.of = {};       // counted afresh
 }
@@ -34,10 +35,12 @@ const all = () => flow.kinds.length === 4;
 export const onTurn = (f, node) => turnListeners.push({ f, node });
 let base = null, lastTok = {}, sampled = 0;
 onUpdate((d, source, live) => {
-  const T = performance.now(), today = d.projects.today || {}, day = d.today?.day;
-  const fresh = !base || base.source !== source || base.day !== day;            // nothing to compare with
-  if (fresh) { P.length = A.length = 0; flow.agents.clear(); lastTok = {}; flow.since = Date.now(); if (!all()) flow.total = 0; }
-  else if (all()) for (const p in today) {
+  // `whole`: the projects' figures say what counts (all of it, or by kind from the split).
+  const T = performance.now(), whole = all() || !!(d.projects.todayIo && Object.keys(d.projects.todayIo).length);
+  const today = whole ? countedToday(d) : d.projects.today || {}, day = d.today?.day;
+  const fresh = !base || base.source !== source || base.day !== day || base.whole !== whole;   // nothing to compare with
+  if (fresh) { P.length = A.length = 0; flow.agents.clear(); lastTok = {}; flow.since = Date.now(); if (!whole) flow.total = 0; }
+  else if (whole) for (const p in today) {
     const n = today[p] - (base.today[p] ?? today[p]);
     if (n > 0) { P.push({ a: T, b: T + over(T - (lastTok[p] ?? -1e9), live), n, p }); lastTok[p] = T; }
   }
@@ -52,7 +55,7 @@ onUpdate((d, source, live) => {
     if (n > 0 && !fresh) {
       const b = T + over(T - g.last, live);
       A.push({ a: T, b, n: n - o, o, id: a.id, p: a.project });
-      if (!all()) { P.push({ a: T, b, n, p: a.project || 'other' }); flow.total += n; }
+      if (!whole) { P.push({ a: T, b, n, p: a.project || 'other' }); flow.total += n; }
       g.last = T; g.lastN = n; flow.turns.push({ at: T, p: a.project || 'other', n });
       for (const l of [...turnListeners]) {
         if (l.node && !l.node.isConnected) turnListeners.splice(turnListeners.indexOf(l), 1);
@@ -62,11 +65,11 @@ onUpdate((d, source, live) => {
     Object.assign(g, { io: { ...a.io }, project: a.project || 'other', model: modelName(a.model) || a.agent || '', kind: a.kind, state: a.state, seen: T });
   }
   for (const [id, g] of flow.agents) { g.on = g.seen === T && !feed.stale; if (T - g.seen > 300000) flow.agents.delete(id); }
-  base = { source, day, today: { ...today } };
-  const outToday = flow.kinds.length === 1 && flow.kinds[0] === 'out' ? d.today?.output : null;
-  if (all()) flow.total = Object.values(today).reduce((a, b) => a + b, 0);
+  base = { source, day, whole, today: { ...today } };
+  const outToday = !whole && flow.kinds.length === 1 && flow.kinds[0] === 'out' ? d.today?.output : null;
+  if (whole) flow.total = Object.values(today).reduce((a, b) => a + b, 0);
   else if (outToday != null) flow.total = outToday;
-  flow.when = all() || outToday != null ? 'today' : 'since ' + new Date(flow.since).toTimeString().slice(0, 5);
+  flow.when = whole || outToday != null ? 'today' : 'since ' + new Date(flow.since).toTimeString().slice(0, 5);
   flow.label = `${all() ? 'TOKENS' : flow.what.toUpperCase()} ${flow.when.toUpperCase()}`;
 });
 setKinds((new URLSearchParams(location.search).get('kinds') || KINDS.join()).split(','));
@@ -524,6 +527,8 @@ export function demo() {
   const projectList = [{ key: 'game', name: 'My Game', color: '#e2502b' }, { key: 'app', name: 'The App', color: '#f0a030' },
     { key: 'site', name: 'Website', color: '#3987e5' }, { key: 'other', name: 'Other' }];
   const all = { game: 66.9e9, app: 8.98e8, site: 1.78e9, other: 9.51e9 }, today = { game: 1.12e9, app: 4.1e7, site: 8.2e6, other: 6.37e8 };
+  // Today's tokens by kind, as agent-stats 0.7 splits them (most of them cache reads).
+  const io = Object.fromEntries(keys.map(k => [k, { in: today[k] * 0.01, cr: today[k] * 0.88, cw: today[k] * 0.07, out: today[k] * 0.04 }]));
   const MODELS = ['Opus 5.5', 'Opus 5.5', 'Sonnet 5.5', 'Fable 5.1'], agents = [];
   let n = 0;
   const add = (project, kind = 'main') => agents.push({ id: 'demo' + n++, parent: null, agent: 'claude', kind, project, state: 'run',
@@ -534,12 +539,12 @@ export function demo() {
     for (const a of agents) if (now >= a.next) {
       const t = { in: 2 + (Math.random() * 8 | 0), cr: Math.round(1.2e5 + Math.random() * 4e5), cw: Math.round(300 + Math.random() ** 3 * 2e4), out: Math.round(30 + Math.random() ** 3 * 1200) };
       a.io = { ...a.io };
-      for (const k in t) { a.io[k] += t[k]; all[a.project] += t[k]; today[a.project] += t[k]; }
+      for (const k in t) { a.io[k] += t[k]; all[a.project] += t[k]; today[a.project] += t[k]; io[a.project][k] += t[k]; }
       a.state = Math.random() < 0.6 ? 'run' : 'thinking'; a.next = now + a.pace * (0.4 + Math.random());
     }
     if (Math.random() < 0.03 && agents.length < 6) add(keys[Math.random() * 4 | 0], 'subagent');
     else if (Math.random() < 0.015 && agents.length > 3) agents.splice(3 + (Math.random() * (agents.length - 3) | 0), 1);
     window.relayFeed({ updated: now, live: { agents: agents.map(({ next, pace, ...a }) => a) }, today: { day }, projectList,
-      projects: { all: { ...all }, today: { ...today }, last: Object.fromEntries(keys.map(k => [k, 1])), lastMs: 1000 } });
+      projects: { all: { ...all }, today: { ...today }, todayIo: structuredClone(io), last: Object.fromEntries(keys.map(k => [k, 1])), lastMs: 1000 } });
   }, 1000);
 }

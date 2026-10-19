@@ -119,7 +119,7 @@
       <section><h2 id="lt"></h2><p id="lp"></p>
         ${GROUPS.map(([title, of]) => `<h3>${title}</h3><div class="grid">${Object.entries(MACHINES).filter(([, m]) => of(m))
           .map(([k, m]) => tile('layout', k, m.name, 0, 0)).join('')}</div>`).join('')}</section>
-      <footer>The tokens counted change the rates, meters, odometers, traces and rain; the trucks carry them all.</footer>
+      <footer>Everything shows only the tokens counted: the trucks and their squares, the figures, rates, meters and traces.</footer>
     </main>
     <main data-tab="machines"></main>
     <main data-tab="general"></main>`;
