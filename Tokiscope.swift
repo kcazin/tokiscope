@@ -21,7 +21,7 @@ import WebKit
 private let opens = ["card:classic", "card:speed", "card:agents", "haul", "pocket", "strip", "haulflow", "dash", "odometer",
                      "seismo", "rain", "meters", "gantry", "city", "belt", "silos"]
 private let sites = [("Built In", BundlePages.origin), ("Local Copy (localhost:8765)", "http://localhost:8765")]
-private let zooms: [(String, CGFloat)] = [("Small", 1), ("Medium", 1.5), ("Large", 2)]
+private let zooms: [(String, CGFloat)] = [("Small", 1), ("Large", 1.5)]
 private let bubbles = [("orb", "Agents Orb"), ("ring", "Today Ring"), ("globe", "Squares Globe"), ("pulse", "Token Rate"),
                        ("tach", "Tachometer"), ("odo", "Odometer"), ("quake", "Seismograph"), ("rain", "Token Rain"), ("ecg", "Heartbeat")]
 // The tokens the rates, meters and traces count (lab/flow.js ?kinds=): any of these, all by default.
@@ -37,7 +37,11 @@ private enum Pref {
     // Settings opens once with a welcome, after the first launch set this Mac up.
     static var welcome: Bool { get { d.bool(forKey: "welcome") } set { d.set(newValue, forKey: "welcome") } }
     static var site: String { get { d.string(forKey: "site") ?? sites[0].1 } set { d.set(newValue, forKey: "site") } }
-    static var zoom: CGFloat { get { d.object(forKey: "zoom") as? CGFloat ?? 1 } set { d.set(newValue, forKey: "zoom") } }
+    // Small by default; a size from before there were two (2, the old Large) is the nearest one.
+    static var zoom: CGFloat {
+        get { let z = d.object(forKey: "zoom") as? CGFloat ?? 1; return zooms.min { abs($0.1 - z) < abs($1.1 - z) }?.1 ?? 1 }
+        set { d.set(newValue, forKey: "zoom") }
+    }
     static var relay: String? { get { d.string(forKey: "relay") } set { d.set(newValue, forKey: "relay") } }
     static var bubble: String { get { d.string(forKey: "bubble") ?? "orb" } set { d.set(newValue, forKey: "bubble") } }
     static var kinds: [String] {

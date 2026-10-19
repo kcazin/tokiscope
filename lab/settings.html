@@ -122,7 +122,7 @@
   const state = {
     b: q.get('b') || 'globe', open: q.get('open') || 'haul',
     kinds: (q.get('kinds') || 'in,cr,cw,out').split(','), scene: q.get('scene') || 'auto', tab: q.get('tab') || 'bubble',
-    zoom: 0, zooms: ['Small', 'Medium', 'Large'], desktop: false,
+    zoom: 0, zooms: ['Small', 'Large'], desktop: false,
     welcome: q.has('welcome'), login: true, autoUpdates: true, updates: true, version: '',
     site: 0, sites: ['Built in', 'Local copy (localhost:8765)'], relay: '', source: 'This Mac’s hub, live',
     stats: app ? null : {
