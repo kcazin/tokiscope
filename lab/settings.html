@@ -106,7 +106,7 @@
 <body>
 <script type="module">
   import { bubble, BUBBLES, CARDS } from './bubble.js';
-  import { run, MACHINES } from './lab.js';
+  import { run, MACHINES, feed, counting } from './lab.js';
   import { setKinds } from './flow.js';
   import { PLACES, placeOf, setScene } from './scene.js';
   const q = new URLSearchParams(location.search);
@@ -157,6 +157,7 @@
       </div>
       <h2>Tokens counted <small>everything shows only these: the trucks and their squares, figures, rates and traces</small></h2>
       <div class="group">${row('Count', `<div class="kinds">${KINDS.map(([k, name]) => `<button data-k="${k}">${name}</button>`).join('')}</div>`)}</div>
+      <p class="lead" id="nosplit" hidden>For now the trucks and today’s figures count all tokens: the agent-stats that keeps your stats doesn’t split them by kind yet. They’ll follow your choice once it’s updated (0.7 on).</p>
       <h2>Bubble <small>all live: click one to use it</small></h2>
       <div class="grid">${Object.entries(BUBBLES).map(([k, b]) => tile('bubble', k, b.name, 84, 84)).join('')}</div>
       <h2>Opens into <small>when you click the bubble</small></h2>${opens()}
@@ -295,6 +296,8 @@
       window.settings.set({ kinds: next });
     }
   });
+  // Some kinds picked, but the stats say only totals: everything falls back to all of them, so say why.
+  setInterval(() => { document.getElementById('nosplit').hidden = !feed.updated || counting.split || state.kinds.length === 4; }, 1000);
   window.settings.set({ scene: state.scene, kinds: state.kinds });
   send('ready');
 </script>
