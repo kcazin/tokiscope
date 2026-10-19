@@ -67,6 +67,11 @@ private enum Pref {
     static var clickThrough: Bool { get { d.object(forKey: "clickThrough") as? Bool ?? true } set { d.set(newValue, forKey: "clickThrough") } }
     static var glass: Bool { get { d.object(forKey: "glass") as? Bool ?? true } set { d.set(newValue, forKey: "glass") } }
     static var onDesktop: Bool { get { d.bool(forKey: "onDesktop") } set { d.set(newValue, forKey: "onDesktop") } }
+    // The sky behind the trucks (lab/scene.js ?scene=): "auto" for the city of the Mac's time zone, a city, or "off".
+    static var scene: String {
+        get { let k = (d.string(forKey: "scene") ?? "").filter { $0.isASCII && $0.isLetter }.lowercased(); return k.isEmpty ? "auto" : k }
+        set { d.set(newValue, forKey: "scene") }
+    }
 }
 
 private extension NSRect { var area: CGFloat { isNull ? 0 : width * height } }
@@ -1307,7 +1312,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         // In bubble mode the field opened on click is the layout, if it is one of the lab's.
         let art = layout.padded ? layout.key : "haul"
         let page = (Pref.bubbleMode ? "/lab/bubble.html?b=\(Pref.bubble)&card=\(Pref.card)&art=\(art)&app=1" : layout.path)
-            + "&kinds=\(Pref.kinds.joined(separator: ","))"
+            + "&kinds=\(Pref.kinds.joined(separator: ","))&scene=\(Pref.scene)"
         guard let url = link(page, custom: Pref.customURL) else { return }
         web.pageZoom = Pref.zoom
         hovering = false; hotRects = []; rectsTop = false; rectsLeft = false; isOpen = false; anchored = false   // the new page reports its own
@@ -1507,7 +1512,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         if settingsWindow?.isVisible == true {
             if let tab { settingsWeb?.evaluateJavaScript("window.settings?.set({ tab: '\(tab)' })") }
         } else {
-            let state = "mode=\(Pref.bubbleMode ? "bubble" : "widget")&b=\(Pref.bubble)&card=\(Pref.card)&layout=\(layout.key)&kinds=\(Pref.kinds.joined(separator: ","))"
+            let state = "mode=\(Pref.bubbleMode ? "bubble" : "widget")&b=\(Pref.bubble)&card=\(Pref.card)&layout=\(layout.key)&kinds=\(Pref.kinds.joined(separator: ","))&scene=\(Pref.scene)"
                 + (tab.map { "&tab=\($0)" } ?? "")
             if let url = link("/lab/settings.html?\(state)") { settingsWeb?.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)) }
             // The machines' state, while it shows.
@@ -1530,7 +1535,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
     private func settingsState() -> [String: Any] {
         var s: [String: Any] = [
-            "mode": Pref.bubbleMode ? "bubble" : "widget", "b": Pref.bubble, "card": Pref.card, "layout": layout.key, "kinds": Pref.kinds,
+            "mode": Pref.bubbleMode ? "bubble" : "widget", "b": Pref.bubble, "card": Pref.card, "layout": layout.key, "kinds": Pref.kinds, "scene": Pref.scene,
             "zoom": zooms.firstIndex { $0.1 == Pref.zoom } ?? 0, "zooms": zooms.map(\.0),
             "desktop": Pref.onDesktop, "glass": Pref.glass, "clickThrough": Pref.clickThrough,
             "login": SMAppService.mainApp.status == .enabled, "updates": updates != nil,
@@ -1577,6 +1582,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         case "card": if let i = cards.firstIndex(where: { $0.0 == key }) { useCard(i) }
         case "layout": if let i = layouts.firstIndex(where: { $0?.key == key }) { useLayout(i) }
         case "kinds": useKinds(key.split(separator: ",").map(String.init))
+        case "scene": Pref.scene = key; load(); syncSettings()
         case "zoom": if let i = Int(key), zooms.indices.contains(i) { useZoom(i) }
         case "site": if let i = Int(key), sites.indices.contains(i) { useSite(i) }
         case "desktop": Pref.onDesktop = key == "1"; apply()

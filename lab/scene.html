@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backdrops</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400&family=Schibsted+Grotesk:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* Every city's backdrop behind the trucks, at dawn, by day, at dusk, at night and now, each in the field's small
+     dark glass window. ?only=<city> shows one; ?date=YYYY-MM-DD another day (the moon's phase, the season). */
+  body { margin: 0; color: #e8e8e8; font: 400 .8125rem/1.45 "Schibsted Grotesk", system-ui, sans-serif; background: #222 url(torii.jpg) center / cover fixed; }
+  h1 { margin: 0; padding: 1.6rem 2rem .2rem; font-size: 1rem; font-weight: 500; text-shadow: 0 1px 6px #000; }
+  p.intro { margin: 0 2rem; color: #ddd; text-shadow: 0 1px 6px #000; }
+  table { border-spacing: 14px; padding: 0 1rem 1.5rem; }
+  th { font-weight: 500; text-align: left; text-shadow: 0 1px 6px #000; }
+  th small { display: block; font: 400 .7rem "Geist Mono", ui-monospace, monospace; color: #c4c4c4; }
+  .glass { padding: 10px; border-radius: 12px; background: rgb(14 14 14 / .78); backdrop-filter: blur(24px) saturate(1.4);
+    box-shadow: 0 0 0 1px rgb(255 255 255 / .06); }
+  canvas { display: block; }
+  td small { display: block; margin-top: 4px; font: 400 .7rem "Geist Mono", ui-monospace, monospace; color: #c4c4c4; text-shadow: 0 1px 6px #000; }
+</style>
+</head>
+<body>
+<script type="module">
+  import { CITIES, backdrop, sunHeight, zoneTime, cityOf } from './scene.js';
+  const q = new URLSearchParams(location.search), only = q.get('only'), W = +q.get('w') || 320, B = +q.get('ground') || 62;
+  const [y, m, d] = (q.get('date') || new Date().toLocaleDateString('en-CA')).split('-').map(Number);
+  const zoneOf = c => c.zones[0].endsWith('/') ? 'Australia/Sydney' : c.zones[0];
+  // The first moment of the day the sun passes `alt` going up (or down), in five-minute steps.
+  const when = (c, alt, rising) => {
+    const t0 = zoneTime(zoneOf(c), y, m - 1, d, 0);
+    for (let k = 0, prev = sunHeight(t0, c.lat, c.lng); k < 288; k++) {
+      const t = t0 + (k + 1) * 3e5, h = sunHeight(t, c.lat, c.lng);
+      if (rising ? prev < alt && h >= alt : prev > alt && h <= alt) return t;
+      prev = h;
+    }
+    return t0 + 12 * 36e5;
+  };
+  const noon = c => { const t0 = zoneTime(zoneOf(c), y, m - 1, d, 0); let best = t0; for (let k = 0; k < 288; k++) { const t = t0 + k * 3e5; if (sunHeight(t, c.lat, c.lng) > sunHeight(best, c.lat, c.lng)) best = t; } return best; };
+  const MOMENTS = [['Dawn', c => when(c, -3, true)], ['Morning', c => when(c, 8, true)], ['Day', noon], ['Dusk', c => when(c, -2, false)],
+    ['Night', c => zoneTime(zoneOf(c), y, m - 1, d, 22)], ['Now', null]];
+  const cities = only ? [CITIES[only] || cityOf(only)] : Object.values(CITIES);
+  const here = cityOf();
+  document.body.innerHTML = `<h1>Backdrops</h1><p class="intro">Here: ${here.name}, ${here.sight}. ${MOMENTS.map(m => m[0]).join(', ')} on ${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}, local time.</p>
+    <table>${cities.map(c => `<tr><th>${c.name}<small>${c.sight}</small></th>${MOMENTS.map(([name, f]) => {
+      const at = f ? f(c) : null, label = at ? new Intl.DateTimeFormat('en-GB', { timeZone: zoneOf(c), hour: '2-digit', minute: '2-digit' }).format(at) : 'live';
+      return `<td><div class="glass"><canvas data-city="${c.key}" data-at="${at ?? ''}"></canvas></div><small>${name} · ${label}</small></td>`;
+    }).join('')}</tr>`).join('')}</table>`;
+  const dpr = Math.min(4, devicePixelRatio || 1), all = [...document.querySelectorAll('canvas')].map(cv => {
+    cv.width = W * dpr; cv.height = (B + 14) * dpr; cv.style.width = W + 'px'; cv.style.height = B + 14 + 'px';
+    const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
+    const at = +cv.dataset.at, city = cv.dataset.city === 'auto' ? here : CITIES[cv.dataset.city];
+    return { ctx, bd: backdrop(W, B, { at: 110 * W / 320, city, clock: at ? () => at : Date.now }) };
+  });
+  const frame = now => {
+    for (const { ctx, bd } of all) {
+      ctx.clearRect(0, 0, W, B + 14);
+      bd.draw(ctx, now / 1000);
+      ctx.fillStyle = 'rgba(232, 232, 232, .22)'; ctx.fillRect(0, B, W, 1);
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+</script>
+</body>
+</html>

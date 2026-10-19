@@ -12,7 +12,7 @@
      General: login, updates, where the pages and stats come from. The app is told what was picked or asked for through
      `pick` ({ kind, key }; kind "do" for an action), and tells the page its whole state through window.settings.set.
      In a browser it only previews the Look tab. ?mode=widget|bubble&b=<bubble>&card=<card>&layout=<layout>
-     &kinds=<in,cr,cw,out>&tab=look|machines|general says what is in use. */
+     &kinds=<in,cr,cw,out>&scene=<city>&tab=look|machines|general says what is in use. */
   :root { --accent: #e2502b; }
   body { margin: 0; color: #e8e8e8; font: 400 .8125rem/1.45 "Schibsted Grotesk", system-ui, sans-serif; background: #141414;
     -webkit-user-select: none; user-select: none; }
@@ -53,6 +53,8 @@
   .seg { display: inline-flex; padding: 2px; border-radius: 8px; background: #232323; box-shadow: inset 0 0 0 1px rgb(255 255 255 / .06); }
   .seg button { font: inherit; color: #bdbdbd; background: none; border: 0; padding: .3rem .9rem; border-radius: 6px; cursor: pointer; }
   .seg button.on { color: #fff; background: #3a3a3a; }
+  select { font: inherit; color: #e8e8e8; background: #2a2a2a; border: 0; padding: .3rem .6rem; border-radius: 6px; cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / .08); }
   .kinds { display: inline-flex; align-items: center; gap: .35rem; color: #8a8a8a; }
   .kinds button { font: inherit; color: #9a9a9a; background: #1d1d1d; border: 0; padding: .25rem .6rem; border-radius: 999px; cursor: pointer;
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / .08); }
@@ -82,9 +84,10 @@
   import { bubble, BUBBLES, CARDS } from './bubble.js';
   import { run, MACHINES } from './lab.js';
   import { setKinds } from './flow.js';
+  import { CITIES, cityOf, setScene } from './scene.js';
   const q = new URLSearchParams(location.search);
   const state = { mode: q.get('mode') === 'widget' ? 'widget' : 'bubble', b: q.get('b') || 'orb', card: q.get('card') || 'classic', layout: q.get('layout') || 'haul',
-    kinds: (q.get('kinds') || 'in,cr,cw,out').split(','), tab: q.get('tab') || 'look',
+    kinds: (q.get('kinds') || 'in,cr,cw,out').split(','), scene: q.get('scene') || 'auto', tab: q.get('tab') || 'look',
     zoom: 0, zooms: ['Small', 'Medium', 'Large'], desktop: false, glass: true, clickThrough: true };
   const KINDS = [['in', 'Input'], ['cr', 'Cache read'], ['cw', 'Cache write'], ['out', 'Output']];
   const PAIR = { classic: 'orb', speed: 'tach', agents: 'quake' };      // the bubble each card shows on
@@ -102,6 +105,9 @@
         <div class="row"><b>Show as</b>${seg('mode', [['widget', 'Widget'], ['bubble', 'Bubble']])}</div>
         <div class="row"><b>Size</b><span id="zooms"></span></div>
         <div class="row"><b>Count</b><div class="kinds">${KINDS.map(([k, name]) => `<button data-k="${k}">${name}</button>`).join('')}</div></div>
+        <div class="row"><b>Backdrop</b><select id="scene"><option value="auto">Where you are: ${esc(cityOf().name)}</option>
+          ${Object.values(CITIES).sort((a, b) => a.name.localeCompare(b.name)).map(c => `<option value="${c.key}">${esc(c.name)}</option>`).join('')}
+          <option value="off">None</option></select><span class="hint">Behind the trucks, under the sky there now.</span></div>
         <div class="row"><b>Sits</b>${seg('desktop', [['0', 'Above windows'], ['1', 'On the desktop']])}</div>
         <div class="row widget-only"><b>Dark glass</b>${toggle('glass')}<span class="hint">A dark background behind the layout.</span></div>
         <div class="row widget-only"><b>Click through</b>${toggle('clickThrough')}<span class="hint">Clicks go to what's under the widget; hold ⌃ and click it for its menu.</span></div>
@@ -192,6 +198,7 @@
       for (const b of document.querySelectorAll('[data-flag]')) b.classList.toggle('on', !!state[b.dataset.flag]);
       for (const b of document.querySelectorAll('.kinds button')) b.classList.toggle('on', state.kinds.includes(b.dataset.k));
       if (s.kinds) setKinds(state.kinds);
+      if (s.scene) { setScene(state.scene); document.getElementById('scene').value = state.scene; }
       for (const t of document.querySelectorAll('.tile')) t.classList.toggle('on', state[{ bubble: 'b', card: 'card', layout: 'layout' }[t.dataset.kind]] === t.dataset.key);
       document.getElementById('lt').textContent = state.mode === 'bubble' ? 'Opens on click' : 'Layout';
       document.getElementById('lp').textContent = state.mode === 'bubble' ? 'What the bubble opens into when clicked.' : 'What sits on the desktop. All live: click one to use it.';
@@ -224,7 +231,8 @@
       window.settings.set({ kinds: next });
     }
   });
-  window.settings.set({});
+  document.getElementById('scene').addEventListener('change', e => pick('scene', e.target.value));
+  window.settings.set({ scene: state.scene });
   send('ready');                                         // the app answers with everything else
 </script>
 </body>

@@ -3,6 +3,8 @@
 // arrive: every publish's new tokens per project become units (crates, bricks, grains) handed out over the time
 // until the next one. A project's figure is its tokens today less the units still on their way to it.
 
+import { backdrop } from './scene.js';
+
 // Where the stats come from. In the desktop app, the hub (window.hubFeed): the app hands over its /api/state and
 // /api/repos, and each repository shows under its own name, those of a configured project under the project's. A
 // relay too when one is given (?relay=<url>): its projects are the hub's public ones, and every other repository
@@ -589,6 +591,8 @@ export function haul(el, opt) {
   const { W, ground, hole, layout, across = 4, rate, kick } = opt, H = haulH(opt);
   const ctx = stageHD(el, W, H), ch = channel(5e4, 120), S = 3, P = 2, TW = 24 * P, TH = 10 * P, G = 420, HOLE = 6;
   const wall = hole + TW + 20, cols = Math.floor((W - 2 - wall) / S), x0 = W - 2 - cols * S, maxH = Math.floor((ground - 22) / S);
+  // Where you are, under its sky now (scene.js): the landmark over the pile's ground, which the truck keeps clear.
+  const sky = backdrop(W, ground, { at: Math.round(wall + (W - wall) * 0.55) });
   const hgt = new Array(cols).fill(0), stack = hgt.map(() => []), air = [], down = [], flash = {};
   const tr = { x: hole + 8, phase: 'wait', bed: [], bucket: [], arm: REST, tip: 0, odo: 0, f: 0, took: false, pour: 0 };
   let sweep = 0, lastDraw = 0;
@@ -725,6 +729,7 @@ export function haul(el, opt) {
     draw(t) {
       const dtDraw = Math.min(0.05, t - (lastDraw || t)); lastDraw = t;
       ctx.clearRect(0, 0, W, H);
+      sky.draw(ctx, t);
       ctx.font = `9px ${MONO}`; ctx.textBaseline = 'middle';
       // Agents, how many, and what a square is worth.
       const ag = feed.agents.slice(0, 12);
