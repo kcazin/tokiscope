@@ -5,6 +5,7 @@
 // and night with them, stars come out, a day's clouds drift by, windows and the landmark light up at night.
 // ?scene=<place>|off picks another place or none (Settings does it live through setScene); ?at=<date> and ?speed=<n>
 // show another moment, or the day going by n times as fast (for the lab).
+import { t as say } from './i18n.js';
 const q = new URLSearchParams(location.search);
 const AT = Date.parse(q.get('at') || ''), SPEED = +q.get('speed') || 1, T0 = Date.now();
 const clock = () => (isNaN(AT) ? T0 : AT) + (Date.now() - T0) * SPEED;
@@ -922,7 +923,7 @@ function tulips(g, x0, x1) {
 // where its sky is taken. `draw(g)`: g.cx is where its best known landmark stands (over the pile's ground, which the
 // truck keeps clear), g.at(f) a fraction of the way across, g.H the most anything may rise.
 export const PLACES = {
-  japan: { name: 'Japan', sights: 'Tokyo Tower, the Skytree, Fuji, Osaka Castle, a Kyoto pagoda and a torii', lat: 35.68, lng: 139.69, zones: ['Asia/Tokyo', 'Japan'],
+  japan: { name: say('Japan'), sights: say('Tokyo Tower, the Skytree, Fuji, Osaka Castle, a Kyoto pagoda and a torii'), lat: 35.68, lng: 139.69, zones: ['Asia/Tokyo', 'Japan'],
     draw: g => {
       fuji(g, g.at(0.42), g.H * 0.46);
       g.skyline(7, g.at(0.3), g.W, g.H * 0.06, g.H * 0.22, 0.55);
@@ -932,7 +933,7 @@ export const PLACES = {
       tokyoTower(g, g.cx, Math.round(g.H * 0.82));
       torii(g, g.at(0.93), Math.round(g.H * 0.36));
     } },
-  korea: { name: 'South Korea', sights: 'N Seoul Tower, Lotte World Tower and Namdaemun', lat: 37.55, lng: 126.99, zones: ['Asia/Seoul', 'ROK'],
+  korea: { name: say('South Korea'), sights: say('N Seoul Tower, Lotte World Tower and Namdaemun'), lat: 37.55, lng: 126.99, zones: ['Asia/Seoul', 'ROK'],
     draw: g => {
       g.hill(g.at(0.3), g.H * 1.1, g.H * 0.4, '#4a5d58', 0.75, 0);
       namdaemun(g, g.at(0.1), Math.round(g.H * 0.42));
@@ -940,7 +941,7 @@ export const PLACES = {
       namsan(g, g.cx, Math.round(g.H * 0.92));
       g.skyline(8, g.at(0.2), g.W, g.H * 0.04, g.H * 0.16, 0.3);
     } },
-  china: { name: 'China', sights: 'the Oriental Pearl and Shanghai Tower, the Temple of Heaven and the Great Wall', lat: 31.23, lng: 121.47,
+  china: { name: say('China'), sights: say('the Oriental Pearl and Shanghai Tower, the Temple of Heaven and the Great Wall'), lat: 31.23, lng: 121.47,
     zones: ['Asia/Shanghai', 'Asia/Chongqing', 'Asia/Chungking', 'Asia/Harbin', 'Asia/Urumqi', 'PRC'],
     draw: g => {
       greatWall(g, g.at(0.2), g.at(0.6), g.H * 0.36);
@@ -949,26 +950,26 @@ export const PLACES = {
       shanghaiTower(g, g.cx + Math.round(g.H * 0.6), Math.round(g.H * 0.98));
       pearl(g, g.cx, Math.round(g.H * 0.9));
     } },
-  singapore: { name: 'Singapore', sights: 'Marina Bay Sands, the Supertrees and the Flyer', lat: 1.28, lng: 103.85, zones: ['Asia/Singapore', 'Singapore'],
+  singapore: { name: say('Singapore'), sights: say('Marina Bay Sands, the Supertrees and the Flyer'), lat: 1.28, lng: 103.85, zones: ['Asia/Singapore', 'Singapore'],
     draw: g => {
       g.skyline(10, g.at(0.25), g.W, g.H * 0.08, g.H * 0.4, 0.6);
       const R = Math.round(g.H * 0.36); eye(g, g.at(0.14), R + 2, R);
       mbs(g, g.cx, g.H);
     } },
-  uae: { name: 'UAE', sights: 'the Burj Khalifa, the Burj Al Arab and the Sheikh Zayed Mosque', lat: 25.2, lng: 55.27, zones: ['Asia/Dubai', 'Asia/Muscat'],
+  uae: { name: say('UAE'), sights: say('the Burj Khalifa, the Burj Al Arab and the Sheikh Zayed Mosque'), lat: 25.2, lng: 55.27, zones: ['Asia/Dubai', 'Asia/Muscat'],
     draw: g => {
       grandMosque(g, g.at(0.13), Math.round(g.H * 0.5));
       g.skyline(11, g.at(0.3), g.W, g.H * 0.08, g.H * 0.36, 0.55, ['#8e9aa6', '#a3adb6', '#7d8894']);
       burjAlArab(g, g.cx - Math.round(g.H * 0.9), Math.round(g.H * 0.62));
       burj(g, g.cx, g.H);
     } },
-  india: { name: 'India', sights: 'the Taj Mahal, India Gate and the Qutub Minar', lat: 28.61, lng: 77.21, zones: ['Asia/Kolkata', 'Asia/Calcutta'],
+  india: { name: say('India'), sights: say('the Taj Mahal, India Gate and the Qutub Minar'), lat: 28.61, lng: 77.21, zones: ['Asia/Kolkata', 'Asia/Calcutta'],
     draw: g => {
       indiaGate(g, g.at(0.1), Math.round(g.H * 0.55));
       qutubMinar(g, g.cx - Math.round(g.H * 1.2), Math.round(g.H * 0.9));
       taj(g, g.cx, g.H);
     } },
-  egypt: { name: 'Egypt', sights: 'the Pyramids of Giza, the Sphinx and the Cairo Tower', lat: 30.04, lng: 31.24, zones: ['Africa/Cairo', 'Egypt'],
+  egypt: { name: say('Egypt'), sights: say('the Pyramids of Giza, the Sphinx and the Cairo Tower'), lat: 30.04, lng: 31.24, zones: ['Africa/Cairo', 'Egypt'],
     draw: g => {
       g.skyline(12, 0, g.at(0.3), g.H * 0.03, g.H * 0.12, 0.6, ['#a99a80', '#9a8c74']);
       cairoTower(g, g.at(0.1), Math.round(g.H * 0.86));
@@ -979,14 +980,14 @@ export const PLACES = {
       sphinx(g, g.cx - Math.round(g.H * 1.45), Math.round(g.H * 0.16));
       palm(g, g.at(0.3), Math.round(g.H * 0.24));
     } },
-  france: { name: 'France', sights: 'the Eiffel Tower, the Arc de Triomphe and Notre-Dame', lat: 48.86, lng: 2.35, zones: ['Europe/Paris', 'Europe/Monaco'],
+  france: { name: say('France'), sights: say('the Eiffel Tower, the Arc de Triomphe and Notre-Dame'), lat: 48.86, lng: 2.35, zones: ['Europe/Paris', 'Europe/Monaco'],
     draw: g => {
       g.skyline(13, 0, g.W, g.H * 0.08, g.H * 0.17, 0.5, ['#bcb2a0', '#a9a090', '#b5ab9a']);
       arc(g, g.at(0.1), Math.round(g.H * 0.46));
       notreDame(g, g.cx - Math.round(g.H * 1.35), Math.round(g.H * 0.55));
       eiffel(g, g.cx, g.H);
     } },
-  uk: { name: 'United Kingdom', sights: 'Big Ben, the London Eye, Tower Bridge and the Shard', lat: 51.5, lng: -0.12, zones: ['Europe/London', 'Europe/Belfast', 'GB', 'GB-Eire'],
+  uk: { name: say('United Kingdom'), sights: say('Big Ben, the London Eye, Tower Bridge and the Shard'), lat: 51.5, lng: -0.12, zones: ['Europe/London', 'Europe/Belfast', 'GB', 'GB-Eire'],
     draw: g => {
       g.skyline(14, 0, g.W, g.H * 0.06, g.H * 0.22, 0.6);
       towerBridge(g, g.at(0.13), Math.round(g.H * 0.62));
@@ -996,34 +997,34 @@ export const PLACES = {
       westminster(g, g.cx - Math.round(g.H * 0.8), g.cx, g.H);
       bigBen(g, g.cx, g.H);
     } },
-  germany: { name: 'Germany', sights: 'the Fernsehturm, the Brandenburg Gate and Cologne Cathedral', lat: 52.52, lng: 13.4, zones: ['Europe/Berlin', 'Europe/Busingen'],
+  germany: { name: say('Germany'), sights: say('the Fernsehturm, the Brandenburg Gate and Cologne Cathedral'), lat: 52.52, lng: 13.4, zones: ['Europe/Berlin', 'Europe/Busingen'],
     draw: g => {
       g.skyline(15, 0, g.W, g.H * 0.08, g.H * 0.2, 0.5);
       brandenburg(g, g.at(0.12), Math.round(g.H * 0.44));
       cologne(g, g.at(0.43), Math.round(g.H * 0.94));
       fernsehturm(g, g.cx, g.H);
     } },
-  italy: { name: 'Italy', sights: 'the Colosseum, the Leaning Tower of Pisa and Florence’s Duomo', lat: 41.9, lng: 12.5, zones: ['Europe/Rome', 'Europe/Vatican', 'Europe/San_Marino'],
+  italy: { name: say('Italy'), sights: say('the Colosseum, the Leaning Tower of Pisa and Florence’s Duomo'), lat: 41.9, lng: 12.5, zones: ['Europe/Rome', 'Europe/Vatican', 'Europe/San_Marino'],
     draw: g => {
       g.skyline(16, 0, g.W, g.H * 0.05, g.H * 0.13, 0.55, ['#b8a080', '#a88e70', '#c0a888']);
       pisa(g, g.at(0.08), Math.round(g.H * 0.62));
       duomo(g, g.at(0.36), Math.round(g.H * 0.62));
       colosseum(g, g.cx, g.H);
     } },
-  spain: { name: 'Spain', sights: 'the Sagrada Família and Torre Glòries', lat: 41.39, lng: 2.17, zones: ['Europe/Madrid'],
+  spain: { name: say('Spain'), sights: say('the Sagrada Família and Torre Glòries'), lat: 41.39, lng: 2.17, zones: ['Europe/Madrid'],
     draw: g => {
       g.skyline(24, 0, g.W, g.H * 0.06, g.H * 0.18, 0.5, ['#c2b096', '#b09c84', '#a89880']);
       glories(g, g.at(0.15), Math.round(g.H * 0.7));
       sagrada(g, g.cx, g.H);
     } },
-  netherlands: { name: 'Netherlands', sights: 'canal houses, windmills and tulips', lat: 52.37, lng: 4.9, zones: ['Europe/Amsterdam'],
+  netherlands: { name: say('Netherlands'), sights: say('canal houses, windmills and tulips'), lat: 52.37, lng: 4.9, zones: ['Europe/Amsterdam'],
     draw: g => {
       tulips(g, 0, g.at(0.3));
       windmill(g, g.at(0.12), g.H);
       canalHouses(g, g.at(0.35), g.at(0.82), g.H);
       windmill(g, g.at(0.92), Math.round(g.H * 0.7));
     } },
-  useast: { name: 'US East', sights: 'the Empire State Building, the Statue of Liberty and the Capitol', lat: 40.71, lng: -74.0,
+  useast: { name: say('US East'), sights: say('the Empire State Building, the Statue of Liberty and the Capitol'), lat: 40.71, lng: -74.0,
     zones: ['America/New_York', 'America/Detroit', 'America/Indiana/', 'America/Kentucky/', 'US/Eastern', 'EST5EDT'],
     draw: g => {
       liberty(g, g.at(0.06), Math.round(g.H * 0.62));
@@ -1033,43 +1034,43 @@ export const PLACES = {
       chrysler(g, g.cx + Math.round(g.H * 0.55), Math.round(g.H * 0.72));
       empireState(g, g.cx, g.H);
     } },
-  uscentral: { name: 'US Central', sights: 'the Willis Tower, the Hancock and the Gateway Arch', lat: 41.88, lng: -87.63, zones: ['America/Chicago', 'US/Central', 'CST6CDT'],
+  uscentral: { name: say('US Central'), sights: say('the Willis Tower, the Hancock and the Gateway Arch'), lat: 41.88, lng: -87.63, zones: ['America/Chicago', 'US/Central', 'CST6CDT'],
     draw: g => {
       gatewayArch(g, g.at(0.15), Math.round(g.H * 0.78));
       g.skyline(19, g.at(0.38), g.W, g.H * 0.1, g.H * 0.36, 0.55);
       hancock(g, g.cx + Math.round(g.H * 0.62), Math.round(g.H * 0.82));
       willis(g, g.cx, g.H);
     } },
-  uswest: { name: 'US West', sights: 'the Golden Gate Bridge, the Space Needle and the Hollywood sign', lat: 37.77, lng: -122.42, zones: ['America/Los_Angeles', 'US/Pacific', 'PST8PDT'],
+  uswest: { name: say('US West'), sights: say('the Golden Gate Bridge, the Space Needle and the Hollywood sign'), lat: 37.77, lng: -122.42, zones: ['America/Los_Angeles', 'US/Pacific', 'PST8PDT'],
     draw: g => {
       hollywood(g, g.at(0.32), Math.round(g.H * 0.7));
       spaceNeedle(g, g.at(0.08), Math.round(g.H * 0.92));
       palm(g, g.at(0.48), Math.round(g.H * 0.4));
       goldenGate(g, g.cx + Math.round(g.H * 0.25), Math.round(g.H * 0.82));
     } },
-  canada: { name: 'Canada East', sights: 'the CN Tower and the Peace Tower', lat: 43.65, lng: -79.38, zones: ['America/Toronto', 'America/Montreal', 'America/Nipigon', 'Canada/Eastern'],
+  canada: { name: say('Canada East'), sights: say('the CN Tower and the Peace Tower'), lat: 43.65, lng: -79.38, zones: ['America/Toronto', 'America/Montreal', 'America/Nipigon', 'Canada/Eastern'],
     draw: g => {
       peaceTower(g, g.at(0.13), Math.round(g.H * 0.66));
       g.skyline(18, g.at(0.3), g.W, g.H * 0.08, g.H * 0.34, 0.5);
       cnTower(g, g.cx, g.H);
     } },
-  brazil: { name: 'Brazil', sights: 'Christ the Redeemer, Sugarloaf and the Congress in Brasília', lat: -22.95, lng: -43.21, zones: ['America/Sao_Paulo', 'Brazil/East'],
+  brazil: { name: say('Brazil'), sights: say('Christ the Redeemer, Sugarloaf and the Congress in Brasília'), lat: -22.95, lng: -43.21, zones: ['America/Sao_Paulo', 'Brazil/East'],
     draw: g => {
       congress(g, g.at(0.12), Math.round(g.H * 0.46));
       rio(g, g.cx - Math.round(g.H * 0.3), g.H);
       g.skyline(20, g.at(0.3), g.W, g.H * 0.03, g.H * 0.12, 0.35);
     } },
-  australia: { name: 'Australia', sights: 'the Opera House, the Harbour Bridge and Uluru', lat: -33.86, lng: 151.21, zones: ['Australia/'],
+  australia: { name: say('Australia'), sights: say('the Opera House, the Harbour Bridge and Uluru'), lat: -33.86, lng: 151.21, zones: ['Australia/'],
     draw: g => { uluru(g, g.at(0.12), Math.round(g.H * 0.2)); sydney(g, g.cx + Math.round(g.H * 0.3), g.H); } },
-  newzealand: { name: 'New Zealand', sights: 'the Sky Tower and the Southern Alps', lat: -36.85, lng: 174.76, zones: ['Pacific/Auckland', 'NZ'],
+  newzealand: { name: say('New Zealand'), sights: say('the Sky Tower and the Southern Alps'), lat: -36.85, lng: 174.76, zones: ['Pacific/Auckland', 'NZ'],
     draw: g => { alps(g, 0, g.at(0.62), g.H * 0.55); g.skyline(22, g.at(0.4), g.W, g.H * 0.06, g.H * 0.26, 0.5); cnTower(g, g.cx, g.H, 0.62, 0.075); } },
 };
 for (const k in PLACES) PLACES[k].key = k;
 const SOUTH = ['Australia/', 'Pacific/Auckland', 'America/Argentina', 'America/Santiago', 'America/Sao_Paulo', 'America/Lima', 'Africa/Johannesburg', 'Africa/Maputo', 'Indian/'];
 // Anywhere else: a city of blocks, the sun over the time zone's longitude.
 function somewhere(zone) {
-  const name = (zone.split('/').pop() || 'Here').replace(/_/g, ' ');
-  return { key: 'auto', name, sights: 'a city skyline', zones: [zone], lat: SOUTH.some(s => zone.startsWith(s)) ? -35 : 40,
+  const name = (zone.split('/').pop() || say('Here')).replace(/_/g, ' ');
+  return { key: 'auto', name, sights: say('a city skyline'), zones: [zone], lat: SOUTH.some(s => zone.startsWith(s)) ? -35 : 40,
     lng: -new Date().getTimezoneOffset() / 4, draw: g => { g.skyline(31, 0, g.W, g.H * 0.12, g.H * 0.55, 0.55); g.skyline(32, 0, g.W, g.H * 0.05, g.H * 0.28, 0.3); } };
 }
 const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';

@@ -16,7 +16,7 @@
      use. In a browser it runs on made-up state: ?demo=fresh (no other machines yet), ?demo=problem, ?welcome (the
      first launch), ?relay=demo (made-up agents). */
   :root { --accent: #e2502b; --line: rgb(255 255 255 / .06); }
-  body { margin: 0; color: #e8e8e8; font: 400 .8125rem/1.45 "Schibsted Grotesk", system-ui, sans-serif; background: #141414;
+  body { margin: 0; color: #e8e8e8; font: 400 .8125rem/1.45 "Schibsted Grotesk", system-ui, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif; background: #141414;
     -webkit-user-select: none; user-select: none; }
   header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 1.2rem; padding: 1.1rem 1.75rem .9rem;
     background: #141414; box-shadow: 0 1px 0 var(--line); }
@@ -32,7 +32,7 @@
   .row + .row { border-top: 1px solid var(--line); }
   .row > b { flex: 1; font-weight: 400; }
   .row > b small { display: block; color: #7f7f7f; font-size: .75rem; }
-  .row code { font: .75rem "Geist Mono", ui-monospace, monospace; color: #bdbdbd; }
+  .row code { font: .75rem "Geist Mono", ui-monospace, "Hiragino Sans", "Hiragino Kaku Gothic ProN", monospace; color: #bdbdbd; }
   .hint { color: #7f7f7f; }
   .btn { font: inherit; color: #e8e8e8; background: #2a2a2a; border: 0; padding: .3rem .85rem; border-radius: 6px; cursor: pointer;
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / .08); white-space: nowrap; }
@@ -109,11 +109,12 @@
   import { run, MACHINES, feed, counting } from './lab.js';
   import { setKinds } from './flow.js';
   import { PLACES, placeOf, setScene } from './scene.js';
+  import { t, LANG } from './i18n.js';
   const q = new URLSearchParams(location.search);
   const app = !!window.webkit?.messageHandlers?.pick;
-  const KINDS = [['in', 'Input'], ['cr', 'Cache read'], ['cw', 'Cache write'], ['out', 'Output']];
-  const GROUPS = [['With the trucks', m => m.trucks], ['Throughput', m => m.flow && !m.trucks], ['Machines', m => !m.trucks && !m.flow]];
-  const TABS = [['bubble', 'Bubble'], ['machines', 'Machines'], ['general', 'General']];
+  const KINDS = [['in', t('Input')], ['cr', t('Cache read')], ['cw', t('Cache write')], ['out', t('Output')]];
+  const GROUPS = [['trucks', t('With the trucks'), m => m.trucks], ['flow', t('Throughput'), m => m.flow && !m.trucks], ['machines', t('Machines'), m => !m.trucks && !m.flow]];
+  const TABS = [['bubble', t('Bubble')], ['machines', t('Machines')], ['general', t('General')]];
   // What the app would say, for looking at it in a browser.
   const demo = q.get('demo') || '', others = demo === 'fresh' ? [] : [
     { machine: 'mac-mini', name: 'Mac mini', online: true, kind: 'Mac', replica: true, version: '0.7.1' },
@@ -122,12 +123,13 @@
   const state = {
     b: q.get('b') || 'globe', open: q.get('open') || 'haul',
     kinds: (q.get('kinds') || 'in,cr,cw,out').split(','), scene: q.get('scene') || 'auto', tab: q.get('tab') || 'bubble',
-    zoom: 0, zooms: ['Small', 'Large'], desktop: false,
+    zoom: 0, zooms: [t('Small'), t('Large')], desktop: false,
     welcome: q.has('welcome'), login: true, autoUpdates: true, updates: true, version: '',
-    site: 0, sites: ['Built in', 'Local copy (localhost:8765)'], relay: '', source: 'This Mac’s hub, live',
+    language: q.get('lang') || 'auto', languages: [['auto', t('System')], ['en', 'English'], ['ja', '日本語']],
+    site: 0, sites: [t('Built in'), t('Local copy (localhost:8765)')], relay: '', source: t('This Mac’s hub, live'),
     stats: app ? null : {
       running: demo !== 'problem', version: '0.7.1', self: 'This Mac', dashboard: true,
-      problems: demo === 'problem' ? [{ text: 'agent-stats is stopped: Tokiscope isn’t counting this Mac’s agents.', button: 'Start It', do: 'start' }] : [],
+      problems: demo === 'problem' ? [{ text: t('agent-stats is stopped: Tokiscope isn’t counting this Mac’s agents.'), button: t('Start It'), do: 'start' }] : [],
       requests: demo === 'fresh' ? [] : [{ id: 'r1', who: 'MacBook Pro', digits: '48 21' }],
       machines: others, found: demo === 'fresh' ? [{ name: 'Studio', node: 'mac-studio', url: 'http://mac-studio:7777' }] : [],
     },
@@ -138,29 +140,29 @@
   const toggle = flag => `<button class="switch" data-flag="${flag}" aria-label="${flag}"></button>`;
   const tile = (kind, key, name, w, h) => `<button class="tile" data-kind="${kind}" data-key="${key}"><div class="pv" style="width:${w}px;height:${h}px"><div class="in"></div></div><span>${name}</span></button>`;
   const row = (label, control, hint = '') => `<div class="row"><b>${label}${hint ? `<small>${hint}</small>` : ''}</b>${control}</div>`;
-  const backdrop = `<select class="scene"><option value="auto">Where you are: ${esc(placeOf().name)}</option>
-    ${Object.values(PLACES).sort((a, b) => a.name.localeCompare(b.name)).map(c => `<option value="${c.key}">${esc(c.name)}</option>`).join('')}
-    <option value="off">None</option></select>`;
+  const backdrop = `<select class="scene"><option value="auto">${t('Where you are: {place}', { place: esc(placeOf().name) })}</option>
+    ${Object.values(PLACES).sort((a, b) => a.name.localeCompare(b.name, LANG)).map(c => `<option value="${c.key}">${esc(c.name)}</option>`).join('')}
+    <option value="off">${t('None')}</option></select>`;
   // What the bubble opens into: one of the cards (they were what showed on hover), or one of the layouts.
-  const opens = () => `<h3>Cards</h3><div class="grid">${Object.entries(CARDS).map(([k, c]) => tile('open', 'card:' + k, c.name, 228, 196)).join('')}</div>`
-    + GROUPS.map(([title, of]) => `<h3>${title}${title === 'With the trucks' ? `<span class="hint" style="font-size:.75rem">Backdrop</span>${backdrop}` : ''}</h3>
+  const opens = () => `<h3>${t('Cards')}</h3><div class="grid">${Object.entries(CARDS).map(([k, c]) => tile('open', 'card:' + k, c.name, 228, 196)).join('')}</div>`
+    + GROUPS.map(([group, title, of]) => `<h3>${title}${group === 'trucks' ? `<span class="hint" style="font-size:.75rem">${t('Backdrop')}</span>${backdrop}` : ''}</h3>
     <div class="grid">${Object.entries(MACHINES).filter(([, m]) => of(m)).map(([k, m]) => tile('open', k, m.name, 0, 0)).join('')}</div>`).join('');
 
   document.body.innerHTML = `<header><h1>Tokiscope</h1><div class="seg tabs">${TABS.map(([k, name]) => `<button data-tab="${k}">${name}</button>`).join('')}</div></header>
     <main data-tab="bubble">
       <div id="welcome"></div>
-      <div class="stage"><div id="preview"></div><p>Live, with your tokens: the bubble, and what it opens into when you click it.</p></div>
-      <h2>On the screen</h2>
+      <div class="stage"><div id="preview"></div><p>${t('Live, with your tokens: the bubble, and what it opens into when you click it.')}</p></div>
+      <h2>${t('On the screen')}</h2>
       <div class="group">
-        ${row('Size', `<span id="zooms"></span>`)}
-        ${row('Sits', seg('desktop', [['0', 'Above windows'], ['1', 'On the desktop']]))}
+        ${row(t('Size'), `<span id="zooms"></span>`)}
+        ${row(t('Sits'), seg('desktop', [['0', t('Above windows')], ['1', t('On the desktop')]]))}
       </div>
-      <h2>Tokens counted <small>everything shows only these: the trucks and their squares, figures, rates and traces</small></h2>
-      <div class="group">${row('Count', `<div class="kinds">${KINDS.map(([k, name]) => `<button data-k="${k}">${name}</button>`).join('')}</div>`)}</div>
-      <p class="lead" id="nosplit" hidden>For now the trucks and today’s figures count all tokens: the agent-stats that keeps your stats doesn’t split them by kind yet. They’ll follow your choice once it’s updated (0.7 on).</p>
-      <h2>Bubble <small>all live: click one to use it</small></h2>
+      <h2>${t('Tokens counted')} <small>${t('everything shows only these: the trucks and their squares, figures, rates and traces')}</small></h2>
+      <div class="group">${row(t('Count'), `<div class="kinds">${KINDS.map(([k, name]) => `<button data-k="${k}">${name}</button>`).join('')}</div>`)}</div>
+      <p class="lead" id="nosplit" hidden>${t('For now the trucks and today’s figures count all tokens: the agent-stats that keeps your stats doesn’t split them by kind yet. They’ll follow your choice once it’s updated (0.7 on).')}</p>
+      <h2>${t('Bubble')} <small>${t('all live: click one to use it')}</small></h2>
       <div class="grid">${Object.entries(BUBBLES).map(([k, b]) => tile('bubble', k, b.name, 84, 84)).join('')}</div>
-      <h2>Opens into <small>when you click the bubble</small></h2>${opens()}
+      <h2>${t('Opens into')} <small>${t('when you click the bubble')}</small></h2>${opens()}
     </main>
     <main data-tab="machines"></main>
     <main data-tab="general"></main>`;
@@ -202,52 +204,54 @@
   };
 
   // First launch: Tokiscope is already counting here; nothing to set up.
-  const welcome = s => !s.welcome ? '' : `<div class="welcome"><div><b>Tokiscope is counting your agents on this Mac.</b>
-    <span>Pick how it shows below. Use other machines too? Add them in Machines, whenever you like.</span></div>
-    <button class="btn primary" data-do="welcomeDone">Got It</button></div>`;
+  const welcome = s => !s.welcome ? '' : `<div class="welcome"><div><b>${t('Tokiscope is counting your agents on this Mac.')}</b>
+    <span>${t('Pick how it shows below. Use other machines too? Add them in Machines, whenever you like.')}</span></div>
+    <button class="btn primary" data-do="welcomeDone">${t('Got It')}</button></div>`;
 
   // Machines: this Mac, the others, adding one. The fleet is never named; it is just "your machines".
   const machines = st => {
-    if (!st) return `<p class="lead">agent-stats isn’t part of this copy of Tokiscope.</p>`;
+    if (!st) return `<p class="lead">${t('agent-stats isn’t part of this copy of Tokiscope.')}</p>`;
     const off = st.busy ? ' disabled' : '';
-    let h = `<p class="lead">Tokiscope counts the agents on this Mac. Add your other machines to see theirs here too: each Mac with Tokiscope keeps the stats of all of them, so any one of them can be off.</p>`;
-    if (st.busy) h += `<p class="lead">${esc(st.busy)}</p>`;
-    for (const p of st.problems || []) h += `<div class="problem"><span>${esc(p.text)}</span><button class="btn primary" data-do="${p.do}"${off}>${esc(p.button)}</button></div>`;
+    let h = `<p class="lead">${t('Tokiscope counts the agents on this Mac. Add your other machines to see theirs here too: each Mac with Tokiscope keeps the stats of all of them, so any one of them can be off.')}</p>`;
+    if (st.busy) h += `<p class="lead">${esc(t(st.busy))}</p>`;
+    for (const p of st.problems || []) h += `<div class="problem"><span>${esc(t(p.text))}</span><button class="btn primary" data-do="${p.do}"${off}>${esc(t(p.button))}</button></div>`;
     if (st.canSetUp) {
-      return h + `<h2>This Mac</h2><div class="group list"><div class="row"><span class="dot off"></span><b>Not counting yet<small>Tokiscope runs agent-stats on this Mac to count its agents.</small></b>
-        <button class="btn primary" data-do="setUp"${off}>Start Counting</button></div></div>`;
+      return h + `<h2>${t('This Mac')}</h2><div class="group list"><div class="row"><span class="dot off"></span><b>${t('Not counting yet')}<small>${t('Tokiscope runs agent-stats on this Mac to count its agents.')}</small></b>
+        <button class="btn primary" data-do="setUp"${off}>${t('Start Counting')}</button></div></div>`;
     }
-    for (const f of st.found || []) h += `<div class="found"><span>Tokiscope already keeps your stats on <b>${esc(f.node)}</b>. Join it, so both show all your machines?</span><button class="btn primary" data-join="${esc(f.url)}"${off}>Join…</button></div>`;
+    for (const f of st.found || []) h += `<div class="found"><span>${t('Tokiscope already keeps your stats on {node}. Join it, so both show all your machines?', { node: `<b>${esc(f.node)}</b>` })}</span><button class="btn primary" data-join="${esc(f.url)}"${off}>${t('Join…')}</button></div>`;
     if (st.requests?.length) {
-      h += `<h2>Asking to join</h2><div class="group list">${st.requests.map(r => `<div class="row"><b>${esc(r.who)}<small>Shows ${esc(r.digits)}: approve only if it’s yours and shows the same.</small></b><button class="btn primary" data-request="${esc(r.id)}"${off}>Review…</button></div>`).join('')}</div>`;
+      h += `<h2>${t('Asking to join')}</h2><div class="group list">${st.requests.map(r => `<div class="row"><b>${esc(r.who)}<small>${t('Shows {digits}: approve only if it’s yours and shows the same.', { digits: esc(r.digits) })}</small></b><button class="btn primary" data-request="${esc(r.id)}"${off}>${t('Review…')}</button></div>`).join('')}</div>`;
     }
-    h += `<h2>This Mac</h2><div class="group list"><div class="row"><span class="dot ${st.running ? 'on' : 'off'}"></span>
-      <b>${esc(st.self)}<small>${st.running ? 'Counting its agents' : 'Not counting'}${st.version ? ` · agent-stats ${esc(st.version)}` : ''}</small></b>
-      ${st.dashboard ? '<button class="btn" data-do="dashboard">Open Dashboard</button>' : ''}</div></div>`;
+    h += `<h2>${t('This Mac')}</h2><div class="group list"><div class="row"><span class="dot ${st.running ? 'on' : 'off'}"></span>
+      <b>${esc(t(st.self))}<small>${t(st.running ? 'Counting its agents' : 'Not counting')}${st.version ? ` · agent-stats ${esc(st.version)}` : ''}</small></b>
+      ${st.dashboard ? `<button class="btn" data-do="dashboard">${t('Open Dashboard')}</button>` : ''}</div></div>`;
     if (st.machines) {
-      h += `<h2>Other machines</h2><div class="group list">${st.machines.length ? st.machines.map(m => `<div class="row"><span class="dot ${m.revoked ? 'off' : m.online ? 'on' : ''}"></span>
-        <b>${esc(m.name)}<small>${m.revoked ? 'Removed' : [m.online ? 'Online' : 'Offline', m.kind, m.replica ? 'keeps the stats too' : 'reports its agents', m.version && `agent-stats ${m.version}`].filter(Boolean).map(esc).join(' · ')}</small></b>
-        ${m.revoked ? '' : `<button class="btn" data-remove="${esc(m.machine)}"${off}>Remove…</button>`}</div>`).join('') : '<div class="empty">None yet.</div>'}</div>`;
+      h += `<h2>${t('Other machines')}</h2><div class="group list">${st.machines.length ? st.machines.map(m => `<div class="row"><span class="dot ${m.revoked ? 'off' : m.online ? 'on' : ''}"></span>
+        <b>${esc(m.name)}<small>${m.revoked ? t('Removed') : [t(m.online ? 'Online' : 'Offline'), m.kind, t(m.replica ? 'keeps the stats too' : 'reports its agents'), m.version && `agent-stats ${m.version}`].filter(Boolean).map(esc).join(' · ')}</small></b>
+        ${m.revoked ? '' : `<button class="btn" data-remove="${esc(m.machine)}"${off}>${t('Remove…')}</button>`}</div>`).join('') : `<div class="empty">${t('None yet.')}</div>`}</div>`;
     }
-    h += `<h2>Add a machine</h2><div class="ways">
-      <div class="way"><b>Add one from this Mac</b><p>Another Mac, a Linux machine or a server you reach over SSH: Tokiscope installs agent-stats there and adds it.</p>
-        <button class="btn primary" data-do="addMachine"${off}>Add a Machine…</button></div>
-      <div class="way"><b>Or join another Mac</b><p>Tokiscope already counts on another Mac? Join that one instead: this Mac’s stats go with it.</p>
-        <button class="btn" data-do="join"${off}>Join Another Mac…</button></div></div>`;
+    h += `<h2>${t('Add a machine')}</h2><div class="ways">
+      <div class="way"><b>${t('Add one from this Mac')}</b><p>${t('Another Mac, a Linux machine or a server you reach over SSH: Tokiscope installs agent-stats there and adds it.')}</p>
+        <button class="btn primary" data-do="addMachine"${off}>${t('Add a Machine…')}</button></div>
+      <div class="way"><b>${t('Or join another Mac')}</b><p>${t('Tokiscope already counts on another Mac? Join that one instead: this Mac’s stats go with it.')}</p>
+        <button class="btn" data-do="join"${off}>${t('Join Another Mac…')}</button></div></div>`;
     return h;
   };
-  const general = s => `<h2>Startup</h2><div class="group">${row('Open at login', `<button class="switch${s.login ? ' on' : ''}" data-do="login" aria-label="Open at login"></button>`)}</div>
-    <h2>Updates</h2><div class="group">
-      ${s.updates ? row('Check automatically', `<button class="switch${s.autoUpdates ? ' on' : ''}" data-do="autoUpdates" aria-label="Check automatically"></button>`, 'Tokiscope and agent-stats update together.') : ''}
-      ${row(`Tokiscope ${esc(s.version)}`, s.updates ? '<button class="btn" data-do="updates">Check Now</button>' : '<span class="hint">This build doesn’t update itself.</span>')}
+  // The language: the app's list (System first), the pick sent as `language`; the app loads the pages again in it.
+  const general = s => `<h2>${t('Language')}</h2><div class="group">${row(t('Show Tokiscope in'), seg('language', (s.languages || []).map(([k, name]) => [esc(k), esc(name)])))}</div>
+    <h2>${t('Startup')}</h2><div class="group">${row(t('Open at login'), `<button class="switch${s.login ? ' on' : ''}" data-do="login" aria-label="${t('Open at login')}"></button>`)}</div>
+    <h2>${t('Updates')}</h2><div class="group">
+      ${s.updates ? row(t('Check automatically'), `<button class="switch${s.autoUpdates ? ' on' : ''}" data-do="autoUpdates" aria-label="${t('Check automatically')}"></button>`, t('Tokiscope and agent-stats update together.')) : ''}
+      ${row(`Tokiscope ${esc(s.version)}`, s.updates ? `<button class="btn" data-do="updates">${t('Check Now')}</button>` : `<span class="hint">${t('This build doesn’t update itself.')}</span>`)}
     </div>
-    <details${shownAdvanced ? ' open' : ''}><summary>Advanced</summary>
+    <details${shownAdvanced ? ' open' : ''}><summary>${t('Advanced')}</summary>
       <div class="group">
-        ${s.stats && !s.stats.canSetUp ? row('agent-stats', s.stats.running ? '<button class="btn" data-do="stop">Stop</button>' : '<button class="btn primary" data-do="start">Start</button>', s.stats.running ? 'Running on this Mac: it counts the agents and keeps the stats.' : 'Stopped: nothing is counted on this Mac.') : ''}
-        ${row('Stats', `<span class="hint">${esc(s.source)}</span>`)}
-        ${row('Stats relay', `${s.relay ? `<code>${esc(s.relay)}</code>` : '<span class="hint">None</span>'}<button class="btn" data-do="relay">Change…</button>`, 'Read the stats from a relay when no hub answers.')}
-        ${row('Pages from', seg('site', (s.sites || []).map((name, i) => [i, esc(name)])))}
-        ${row('', '<button class="btn" data-do="reload">Reload the Bubble</button>')}
+        ${s.stats && !s.stats.canSetUp ? row('agent-stats', s.stats.running ? `<button class="btn" data-do="stop">${t('Stop')}</button>` : `<button class="btn primary" data-do="start">${t('Start')}</button>`, t(s.stats.running ? 'Running on this Mac: it counts the agents and keeps the stats.' : 'Stopped: nothing is counted on this Mac.')) : ''}
+        ${row(t('Stats'), `<span class="hint">${esc(t(s.source))}</span>`)}
+        ${row(t('Stats relay'), `${s.relay ? `<code>${esc(s.relay)}</code>` : `<span class="hint">${t('None')}</span>`}<button class="btn" data-do="relay">${t('Change…')}</button>`, t('Read the stats from a relay when no hub answers.'))}
+        ${row(t('Pages from'), seg('site', (s.sites || []).map((name, i) => [i, esc(t(name))])))}
+        ${row('', `<button class="btn" data-do="reload">${t('Reload the Bubble')}</button>`)}
       </div></details>`;
   let shownAdvanced = q.has('advanced');
 
@@ -258,7 +262,7 @@
       Object.assign(state, s);
       for (const m of document.querySelectorAll('main')) m.classList.toggle('on', m.dataset.tab === state.tab);
       for (const b of document.querySelectorAll('[data-tab]')) if (b.tagName === 'BUTTON') b.classList.toggle('on', b.dataset.tab === state.tab);
-      const z = seg('zoom', state.zooms.map((name, i) => [i, name]));
+      const z = seg('zoom', state.zooms.map((name, i) => [i, t(name)]));
       if (z !== shown.z) document.getElementById('zooms').innerHTML = shown.z = z;
       const w = welcome(state);
       if (w !== shown.w) document.getElementById('welcome').innerHTML = shown.w = w;
@@ -282,6 +286,7 @@
     if (!b || b.disabled) return;
     const d = b.dataset;
     if (d.tab) { window.settings.set({ tab: d.tab }); send('tab', d.tab); }
+    else if (d.set === 'language' && !app) { d.key === 'auto' ? q.delete('lang') : q.set('lang', d.key); location.search = q; }
     else if (d.set) pick(d.set, d.key);
     else if (d.flag) { const on = !state[d.flag]; send(d.flag, on ? 1 : 0); window.settings.set({ [d.flag]: on }); }
     else if (d.do) { send('do', d.do); if (!app && d.do === 'welcomeDone') window.settings.set({ welcome: false }); }

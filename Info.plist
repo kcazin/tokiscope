@@ -11,6 +11,9 @@
   <key>CFBundleShortVersionString</key><string>0.0.0</string>
   <key>CFBundleVersion</key><string>0.0.0</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <!-- English, or Japanese on a Mac in Japanese (ja.lproj): the app's own strings, and Sparkle's and the system's. -->
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key><array><string>en</string><string>ja</string></array>
   <key>LSUIElement</key><true/>
   <!-- Plain http: a local copy of the pages, and the stats hub on the tailnet (100.x addresses, which ATS doesn't count
        as local). -->

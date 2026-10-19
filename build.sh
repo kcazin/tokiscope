@@ -40,6 +40,7 @@ if [ -n "${TOKISCOPE_VERSION:-}" ]; then
     -c "Add :SUFeedURL string $FEED" "$C/Info.plist"
 fi
 cp -R lab "$C/Resources/"
+cp -R ja.lproj "$C/Resources/"
 cp icon/AppIcon.icns "$C/Resources/"
 cp agents/*.plist "$C/Library/LaunchAgents/"
 ditto "$SP/Sparkle.framework" "$C/Frameworks/Sparkle.framework"

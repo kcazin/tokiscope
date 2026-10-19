@@ -4,6 +4,7 @@
 // until the next one. A project's figure is its tokens today less the units still on their way to it.
 
 import { backdrop } from './scene.js';
+import { t as say, tn as sayN, JA_FONTS } from './i18n.js';
 
 // Where the stats come from. In the desktop app, the hub (window.hubFeed): the app hands over its /api/state and
 // /api/repos, and each repository shows under its own name, those of a configured project under the project's. A
@@ -13,9 +14,9 @@ const RELAY = (new URLSearchParams(location.search).get('relay') || '').replace(
 // The projects come from the feed, and the machines are rebuilt to make room when they change. Until it answers,
 // just `other`. A new project gets its key as its name and a spare colour unless the feed says otherwise.
 export const PROJECTS = ['other'];
-export const NAMES = { other: 'Other' };
+export const NAMES = { other: say('Other') };
 export const RGB = { other: [196, 188, 174] };
-export const SHORT = { other: 'Other' };
+export const SHORT = { other: say('Other') };
 const SPARE = [[86, 178, 98], [160, 110, 226], [40, 180, 168], [226, 96, 150], [206, 196, 72], [110, 146, 255], [214, 128, 80], [150, 200, 230]];
 export const shade = (p, k) => `rgb(${(RGB[p] || RGB.other).map(v => Math.min(255, Math.round(k > 1 ? v + (255 - v) * (k - 1) : v * k)))})`;
 export const SHADES = [1, 0.84, 0.7];
@@ -52,7 +53,7 @@ function setProjects(d) {
   const list = (Array.isArray(d.projectList) ? d.projectList : []).filter(p => p && typeof p.key === 'string' && p.key);
   const today = d.projects.today || {};
   for (const p of list) {
-    if (p.name) { NAMES[p.key] = p.name; SHORT[p.key] = shortName(p.name); }
+    if (p.name) { NAMES[p.key] = p.key === 'other' ? say('Other') : p.name; SHORT[p.key] = shortName(NAMES[p.key]); }
     RGB[p.key] = hexRGB(p.color) || RGB[p.key];
   }
   const keys = [...new Set([...(d.listed ? list.map(p => p.key) : Object.keys(today).filter(k => today[k] > 0)),
@@ -86,7 +87,7 @@ function fromHub(state, repos) {
   return {
     updated: state.now, listed: true, live: { agents }, today: { day: new Date(state.now).toLocaleDateString('en-CA') },
     projects: { all, today, last: {}, active, todayIo },
-    projectList: keys.map(k => ({ key: k, name: k === 'other' ? 'Other' : null })),
+    projectList: keys.map(k => ({ key: k, name: k === 'other' ? say('Other') : null })),
   };
 }
 
@@ -108,9 +109,9 @@ export function countedToday(d) {
   return Object.fromEntries([...new Set([...Object.keys(today), ...Object.keys(io)])]
     .map(p => [p, counting.kinds.reduce((n, k) => n + (io[p]?.[k] || 0), 0)]));
 }
-// What counts, for a label: 'tokens' when it's all of them, else the kinds ('output', 'in + out').
-export const countedWhat = () => everything() || !counting.split ? 'tokens'
-  : counting.kinds.length === 1 ? KIND[counting.kinds[0]] : counting.kinds.join(' + ');
+// What counts, for a label: 'tokens' when it's all of them, else the kinds ('output', 'in + out'), in the page's language.
+export const countedWhat = () => everything() || !counting.split ? say('tokens')
+  : counting.kinds.length === 1 ? say(KIND[counting.kinds[0]]) : counting.kinds.map(k => say(k)).join(' + ');
 export function setCounting(list) {
   const k = KINDS.filter(x => list.includes(x));
   counting.kinds = k.length ? k : KINDS;
@@ -603,7 +604,7 @@ function silos(el) {
 // The homepage's field, small: each agent working right now is a cursor in the corner, and throws its tokens
 // (50K a square) onto the pile. A pixel dump truck scoops the pile, backs up to the hole and tips its load in; out of
 // the hole each square runs to its project, named with today's tokens. Drawn at screen resolution like the site.
-export const MONO = '"Geist Mono", ui-monospace, monospace';
+export const MONO = `"Geist Mono", ui-monospace, ${JA_FONTS}, monospace`;
 const TRUCK_PX = [
   '.....................R..',
   '..DDDDDDDDDDDDDD.BBBBBB.',
@@ -787,7 +788,7 @@ export function haul(el, opt) {
       });
       const n = feed.agents.length;
       ctx.fillStyle = `rgba(232, 232, 232, ${feed.stale ? .45 : .75})`; ctx.textAlign = 'right';
-      ctx.fillText(feed.stale ? 'not live' : `${n} agent${n === 1 ? '' : 's'}`, W - 6 - Math.max(1, ag.length) * 4 - 2, 9);
+      ctx.fillText(feed.stale ? say('not live') : sayN(n, '{n} agent', '{n} agents'), W - 6 - Math.max(1, ag.length) * 4 - 2, 9);
       ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(232, 232, 232, .6)'; ctx.fillRect(4, 8, S - 1, S - 1);
       ctx.fillStyle = 'rgba(232, 232, 232, .45)'; ctx.fillText(`= ${short(ch.U || ch.base)} ${countedWhat()}`, 9, 9);
       // Pile, squares in the air, the truck.
@@ -812,7 +813,7 @@ export function haul(el, opt) {
           }
           ctx.textAlign = 'right'; ctx.fillStyle = lit ? '#ffffff' : 'rgba(232, 232, 232, .85)';
           ctx.fillText(short(ch.count(p)), W - 4, y);
-          if (rate) { ctx.fillStyle = r >= 1 ? shade(p, 1.2) : 'rgba(232, 232, 232, .3)'; ctx.fillText(r >= 1 ? short(r) + '/s' : '–', W - 40, y); }
+          if (rate) { ctx.fillStyle = r >= 1 ? shade(p, 1.2) : 'rgba(232, 232, 232, .3)'; ctx.fillText(r >= 1 ? say('{n}/s', { n: short(r) }) : '–', W - 40, y); }
           ctx.textAlign = 'left';
         });
       } else {
@@ -842,16 +843,16 @@ export const HAUL = {
 };
 const n = () => PROJECTS.length;
 export const MACHINES = {
-  haul: { make: el => haul(el, HAUL.haul), size: () => [320, haulH(HAUL.haul)], name: 'Trucks, with project lines', trucks: true,
-    note: 'The site in small: agents throw squares on the pile, the truck tips them down the hole, each runs along its project\u2019s line.' },
-  pocket: { make: el => haul(el, HAUL.pocket), size: () => [240, haulH(HAUL.pocket)], name: 'Trucks, pocket', trucks: true,
-    note: 'A shorter field; out of the hole the squares run along a rail to a two-by-two legend.' },
-  strip: { make: el => haul(el, HAUL.strip), size: () => [380, haulH(HAUL.strip)], name: 'Trucks, strip', trucks: true,
-    note: 'One row: the field over a single line of projects, for the top or bottom edge of the screen.' },
-  gantry: { make: gantry, size: () => [3 * (28 + 18 * n()), 120], name: 'Gantry crane', note: 'Crates of 250K drop into a bay; the crane lifts them onto each project’s stack, which sinks into the ground when full.' },
-  city: { make: towerCity, size: () => [3 * (20 + 17 * n()), 150], name: 'Tower crane city', note: 'A tower crane builds a tower per project from 100K bricks; the city zooms out when one reaches the top.' },
-  belt: { make: belt, size: () => [3 * (64 + 16 * n()), 48], name: 'Sorting belt', note: 'One line: agents drop 100K grains on a belt that flicks them into their project’s bin.' },
-  silos: { make: silos, size: () => [2 * 16 * n(), 104], name: 'Silos', note: 'A hopper pours 20K grains of sand into each project’s silo; full silos drain.' },
+  haul: { make: el => haul(el, HAUL.haul), size: () => [320, haulH(HAUL.haul)], name: say('Trucks, with project lines'), trucks: true,
+    note: say('The site in small: agents throw squares on the pile, the truck tips them down the hole, each runs along its project\u2019s line.') },
+  pocket: { make: el => haul(el, HAUL.pocket), size: () => [240, haulH(HAUL.pocket)], name: say('Trucks, pocket'), trucks: true,
+    note: say('A shorter field; out of the hole the squares run along a rail to a two-by-two legend.') },
+  strip: { make: el => haul(el, HAUL.strip), size: () => [380, haulH(HAUL.strip)], name: say('Trucks, strip'), trucks: true,
+    note: say('One row: the field over a single line of projects, for the top or bottom edge of the screen.') },
+  gantry: { make: gantry, size: () => [3 * (28 + 18 * n()), 120], name: say('Gantry crane'), note: say('Crates of 250K drop into a bay; the crane lifts them onto each project’s stack, which sinks into the ground when full.') },
+  city: { make: towerCity, size: () => [3 * (20 + 17 * n()), 150], name: say('Tower crane city'), note: say('A tower crane builds a tower per project from 100K bricks; the city zooms out when one reaches the top.') },
+  belt: { make: belt, size: () => [3 * (64 + 16 * n()), 48], name: say('Sorting belt'), note: say('One line: agents drop 100K grains on a belt that flicks them into their project’s bin.') },
+  silos: { make: silos, size: () => [2 * 16 * n(), 104], name: say('Silos'), note: say('A hopper pours 20K grains of sand into each project’s silo; full silos drain.') },
 };
 // Runs the machines in `slots` ([element, key] pairs) plus any `extra` objects with step(dt, t) and draw(t).
 // When the projects change, each machine is built again for them, and then `onChange` is called. When they only

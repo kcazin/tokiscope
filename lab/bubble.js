@@ -4,7 +4,8 @@
 // visible parts are, so it can let clicks through everywhere else; it passes hover in, and hears today at a glance
 // every second for its menu.
 import { run, feed, channel, MACHINES, PROJECTS, NAMES, SHORT, RGB, SHADES, shade, short, MONO, countedWhat } from './lab.js';
-import { flow, onTurn, shownAgents, hd, font, fit, status, STATUS_W, spark, wheels, traces, typist, tachometer, levels, fmt, lg, kickOf, lead, rgba, INK, DIM, FAINT, demo } from './flow.js';
+import { flow, onTurn, shownAgents, shownWhat, shownTotal, hd, font, fit, status, STATUS_W, spark, wheels, traces, typist, tachometer, levels, fmt, lg, kickOf, lead, rgba, INK, DIM, FAINT, demo } from './flow.js';
+import { t as say, tn as sayN, JA_FONTS } from './i18n.js';
 
 const D = 56;                                                     // the bubble's diameter, CSS px
 const rgb = (p, a = 1) => `rgba(${RGB[p]}, ${a})`;
@@ -23,7 +24,7 @@ const busiest = () => PROJECTS.reduce((m, p) => (feed.today[p] || 0) > (feed.tod
 const STYLES = {
   // Agents: a dot per agent circling the count, in its project's colour; subagents on an inner ring. Each 50K
   // tokens flies from one of its project's agents into the middle.
-  orb: { name: 'Agents orb', note: 'How many agents are working, circling in their projects’ colours.', make(ctx) {
+  orb: { name: say('Agents orb'), note: say('How many agents are working, circling in their projects’ colours.'), make(ctx) {
     let spin = 0; const sparks = [];
     const pos = (i, n, r) => { const a = spin + i / Math.max(1, n) * 6.283; return [D / 2 + Math.cos(a) * r, D / 2 + Math.sin(a) * r]; };
     return {
@@ -50,7 +51,7 @@ const STYLES = {
     };
   } },
   // Today: a ring split by project, the day's total in the middle; a project's arc brightens as its tokens arrive.
-  ring: { name: 'Today ring', note: 'Today’s tokens, split by project round a ring.', make(ctx) {
+  ring: { name: say('Today ring'), note: say('Today’s tokens, split by project round a ring.'), make(ctx) {
     const lit = {};
     return {
       arrive(p, t) { lit[p] = t; },
@@ -67,13 +68,13 @@ const STYLES = {
         }
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillStyle = '#e8e8e8'; ctx.font = `11px ${MONO}`; ctx.fillText(short(total), D / 2, D / 2 - 2);
-        ctx.fillStyle = 'rgba(232, 232, 232, .5)'; ctx.font = `7px ${MONO}`; ctx.fillText('today', D / 2, D / 2 + 8);
+        ctx.fillStyle = 'rgba(232, 232, 232, .5)'; ctx.font = `7px ${MONO}`; ctx.fillText(say('today'), D / 2, D / 2 + 8);
       },
     };
   } },
   // Squares: a little pile in a glass ball. Squares drop in as tokens arrive and slip out through the bottom once
   // the ball is half full, on their way to the projects. The agent count sits at the top.
-  globe: { name: 'Squares globe', note: 'The site’s pile in a ball: squares drop in and slip out of the bottom.', make(ctx) {
+  globe: { name: say('Squares globe'), note: say('The site’s pile in a ball: squares drop in and slip out of the bottom.'), make(ctx) {
     const S = 3, cols = Math.floor(D / S), hgt = new Array(cols).fill(0), stack = hgt.map(() => []), fall = [], out = [];
     const floor = c => { const x = (c + 0.5) * S - D / 2; return D / 2 + Math.sqrt(Math.max(0, 26 * 26 - x * x)) - 2; };
     let drain = 0;
@@ -103,7 +104,7 @@ const STYLES = {
   } },
   // Rate: tokens a second, with the last ten minutes as a line, and a ring that beats as new tokens come in (at most
   // every 2.5 s, so a live stream doesn't make it flicker).
-  pulse: { name: 'Token rate', note: 'Tokens a second now, the last ten minutes as a line; it beats as new tokens come in.', make(ctx) {
+  pulse: { name: say('Token rate'), note: say('Tokens a second now, the last ten minutes as a line; it beats as new tokens come in.'), make(ctx) {
     let seen = 0, beat = -9;
     return {
       arrive() {},
@@ -120,27 +121,27 @@ const STYLES = {
         if (k < 1) { ctx.strokeStyle = rgb(p, 0.5 * (1 - k)); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(D / 2, D / 2, 12 + k * 14, 0, 6.283); ctx.stroke(); }
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillStyle = '#e8e8e8'; ctx.font = `11px ${MONO}`; ctx.fillText(short(feed.rate), D / 2, 19);
-        ctx.fillStyle = 'rgba(232, 232, 232, .5)'; ctx.font = `7px ${MONO}`; ctx.fillText('tokens/s', D / 2, 29);
+        ctx.fillStyle = 'rgba(232, 232, 232, .5)'; ctx.font = `7px ${MONO}`; ctx.fillText(say('tokens/s'), D / 2, 29);
       },
     };
   } },
 
   // ---- Speed: the tokens as they stream (flow.js), each turn handed out over the time since the agent's last ----
-  tach: { name: 'Tachometer', note: 'Tokens a second in an arc split by project; vanes spin with it, every turn sends out a ripple.', make(ctx) {
+  tach: { name: say('Tachometer'), note: say('Tokens a second in an arc split by project; vanes spin with it, every turn sends out a ripple.'), make(ctx) {
     const m = tachometer(ctx, D, { ball: false });
     return { arrive() {}, draw(dt, t) { m.step(dt); m.draw(t); } };
   } },
   // Today's thousands on four wheels: the low ones spin at the rate, the high ones step along.
-  odo: { name: 'Odometer', note: 'Today’s tokens on wheels, in thousands, rolling as fast as they come; the rate under them.', make(ctx) {
+  odo: { name: say('Odometer'), note: say('Today’s tokens on wheels, in thousands, rolling as fast as they come; the rate under them.'), make(ctx) {
     return { arrive() {}, draw() {
-      font(7, ctx, 'center'); ctx.fillStyle = DIM; ctx.fillText(fit(ctx, short(flow.shown) + (flow.when === 'today' ? ' today' : ' since'), 40), D / 2, 13);
+      font(7, ctx, 'center'); ctx.fillStyle = DIM; ctx.fillText(fit(ctx, say(flow.when === 'today' ? '{n} today' : '{n} since', { n: short(flow.shown) }), 40), D / 2, 13);
       wheels(ctx, flow.shown, { x: 9, y: 19, n: 4, dw: 9, dh: 16, size: 10, lo: 3, rate: flow.rate, col: rgba(lead()), sep: 0 });
       font(7, ctx); ctx.fillStyle = DIM; ctx.fillText('K', 46.5, 28);
-      font(8, ctx, 'center'); ctx.fillStyle = INK; ctx.fillText(fmt(flow.rate) + '/s', D / 2, 44);
+      font(8, ctx, 'center'); ctx.fillStyle = INK; ctx.fillText(say('{n}/s', { n: fmt(flow.rate) }), D / 2, 44);
     } };
   } },
   // A trace per agent across the ball, trembling while its tokens flow and kicking as a turn lands.
-  quake: { name: 'Seismograph', note: 'A trace per agent across the ball: it trembles while its tokens flow and kicks as a turn lands.', make(ctx) {
+  quake: { name: say('Seismograph'), note: say('A trace per agent across the ball: it trembles while its tokens flow and kicks as a turn lands.'), make(ctx) {
     const tr = traces(46, 14, ctx.canvas);
     return { arrive() {}, draw(dt) {
       tr.step(dt);
@@ -156,7 +157,7 @@ const STYLES = {
     } };
   } },
   // The output typed down the ball, a letter a token in each agent's colour; what they read falls through as dust.
-  rain: { name: 'Token rain', note: 'The output typed down the ball, a letter a token in each agent’s colour; what they read falls as dust.', make(ctx) {
+  rain: { name: say('Token rain'), note: say('The output typed down the ball, a letter a token in each agent’s colour; what they read falls as dust.'), make(ctx) {
     const ty = typist(9, 7, { cap: 120, dustN: 4000, fade: 1.6 });
     return { arrive() {}, draw(dt) {
       ty.step(dt);
@@ -164,12 +165,12 @@ const STYLES = {
       ty.draw(ctx, 1, 0, 6, 8, 7);
       ctx.restore();
       ctx.fillStyle = 'rgba(11, 11, 11, .85)'; ctx.beginPath(); ctx.roundRect(14, 40, 28, 11, 5.5); ctx.fill();
-      font(7, ctx, 'center'); ctx.fillStyle = INK; ctx.fillText(Math.round(flow.out) + '/s', D / 2, 45.5);
+      font(7, ctx, 'center'); ctx.fillStyle = INK; ctx.fillText(say('{n}/s', { n: Math.round(flow.out) }), D / 2, 45.5);
     } };
   } },
   // One line through the ball that blips as each turn lands, as high as the turn is big, in its project's colour;
   // turns a minute over it.
-  ecg: { name: 'Heartbeat', note: 'One line that blips as each turn lands, as high as it is big, in its project’s colour; turns a minute over it.', make(ctx) {
+  ecg: { name: say('Heartbeat'), note: say('One line that blips as each turn lands, as high as it is big, in its project’s colour; turns a minute over it.'), make(ctx) {
     const N = 48, cols = [], blips = [], BEAT = [0.12, -0.18, 1, -0.55, 0.22, 0.08];
     let acc = 0, beat = [];
     onTurn(e => blips.push({ k: kickOf(e.n), p: e.p }), ctx.canvas);
@@ -188,7 +189,7 @@ const STYLES = {
       }
       if (cols.length) { ctx.fillStyle = INK; ctx.fillRect(x0 + cols.length - 2, y(cols[cols.length - 1]) - 1, 2, 2); }
       font(10, ctx, 'center'); ctx.fillStyle = INK; ctx.fillText(String(flow.turns.length), D / 2, 12);
-      font(6, ctx, 'center'); ctx.fillStyle = DIM; ctx.fillText('turns/min', D / 2, 47);
+      font(6, ctx, 'center'); ctx.fillStyle = DIM; ctx.fillText(say('turns/min'), D / 2, 47);
     } };
   } },
 };
@@ -197,19 +198,19 @@ export const BUBBLES = STYLES;
 // ---- The cards --------------------------------------------------------------------------------------------
 // Each fills the card's element; one that draws every frame returns its step(dt, t) and draw(t).
 function card(el) {
-  const ago = ms => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`; };
+  const ago = ms => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? say('{n}s ago', { n: s }) : s < 5400 ? say('{n} min ago', { n: Math.round(s / 60) }) : say('{n} h ago', { n: Math.round(s / 3600) }); };
   const render = () => {
     const by = {};
     for (const a of feed.agents) { const s = STATES[a.state] || 'working'; by[s] = (by[s] || 0) + 1; }
-    const states = Object.entries(by).sort((a, b) => b[1] - a[1]).map(([s, n]) => `${n} ${s}`).join(' · ');
+    const states = Object.entries(by).sort((a, b) => b[1] - a[1]).map(([s, n]) => say('{n} {state}', { n, state: say(s) })).join(' · ');
     const total = PROJECTS.reduce((n, p) => n + (feed.today[p] || 0), 0), max = Math.max(1, ...PROJECTS.map(p => feed.today[p] || 0));
     const subs = feed.agents.filter(a => a.kind === 'subagent').length;
-    el.innerHTML = `<p class="hd"><b>${feed.stale ? 'Not live' : `${feed.agents.length} agent${feed.agents.length === 1 ? '' : 's'}`}</b>${subs ? ` <span>${subs} of them subagents</span>` : ''}</p>
-      <p class="st">${states || 'all quiet'}</p>
-      <p class="rt"><b>${short(feed.rate)}</b> tokens/s · <b>${short(total)}</b> today</p>
+    el.innerHTML = `<p class="hd"><b>${feed.stale ? say('Not live') : sayN(feed.agents.length, '{n} agent', '{n} agents')}</b>${subs ? ` <span>${say('{n} of them subagents', { n: subs })}</span>` : ''}</p>
+      <p class="st">${states || say('all quiet')}</p>
+      <p class="rt">${say('{rate} tokens/s · {total} today', { rate: `<b>${short(feed.rate)}</b>`, total: `<b>${short(total)}</b>` })}</p>
       <ul>${PROJECTS.map(p => `<li><i style="background:${rgb(p)}"></i><span>${NAMES[p]}</span><em>${short(feed.today[p] || 0)}</em>
         <s style="width:${(feed.today[p] || 0) / max * 100}%;background:${rgb(p, 0.55)}"></s></li>`).join('')}</ul>
-      <p class="ft">${!feed.updated ? 'Connecting…' : `${feed.stale ? 'Not live · ' : feed.live ? 'Live · ' : ''}${ago(Date.now() - feed.updated)}`}</p>`;
+      <p class="ft">${!feed.updated ? say('Connecting…') : `${feed.stale ? say('Not live') + ' · ' : feed.live ? say('Live') + ' · ' : ''}${ago(Date.now() - feed.updated)}`}</p>`;
   };
   render(); setInterval(render, 1000);
 }
@@ -224,15 +225,15 @@ function speedCard(el) {
       ctx.clearRect(0, 0, W, H);
       font(24, ctx); ctx.fillStyle = INK; ctx.fillText(fmt(flow.rate), 0, 13);
       const rw = ctx.measureText(fmt(flow.rate)).width;
-      font(11, ctx); ctx.fillStyle = DIM; ctx.fillText(fit(ctx, `${flow.what || 'tokens'} a second`, W - STATUS_W - rw - 7), rw + 7, 16);
+      font(11, ctx); ctx.fillStyle = DIM; ctx.fillText(fit(ctx, say('{what} a second', { what: shownWhat() }), W - STATUS_W - rw - 7), rw + 7, 16);
       status(ctx, W, 5, t);
       font(10, ctx); ctx.fillStyle = '#bdbdbd';
-      ctx.fillText(fit(ctx, `${flow.kinds.includes('out') ? `${Math.round(flow.out)} output · ` : ''}${flow.turns.length} turns a minute`, W), 0, 36);
+      ctx.fillText(fit(ctx, `${flow.kinds.includes('out') ? say('{n} output', { n: Math.round(flow.out) }) + ' · ' : ''}${say('{n} turns a minute', { n: flow.turns.length })}`, W), 0, 36);
       spark(ctx, 0, 48, W, 34);
       const T = performance.now();
       for (const e of flow.turns) { ctx.fillStyle = rgb(e.p, 0.9); ctx.fillRect(W - (T - e.at) / 60000 * W - 1, 86, 2, 4); }
-      font(8, ctx); ctx.fillStyle = '#7a7a7a'; ctx.fillText('a minute ago', 0, 97);
-      font(8, ctx, 'right'); ctx.fillText('a tick a turn · now', W, 97);
+      font(8, ctx); ctx.fillStyle = '#7a7a7a'; ctx.fillText(say('a minute ago'), 0, 97);
+      font(8, ctx, 'right'); ctx.fillText(say('a tick a turn · now'), W, 97);
       PROJECTS.forEach((p, i) => {
         const y = 113 + i * 16, r = flow.of[p] || 0;
         ctx.fillStyle = rgb(p); ctx.fillRect(0, y - 3.5, 7, 7);
@@ -240,7 +241,7 @@ function speedCard(el) {
         lv.draw(ctx, p, 80, y - 4, 18, 5, 8);
         font(10, ctx, 'right'); ctx.fillStyle = r >= 1 ? INK : DIM; ctx.fillText(r >= 1 ? fmt(r) : '–', W, y);
       });
-      font(10, ctx); ctx.fillStyle = '#7a7a7a'; ctx.fillText(`${short(flow.total)} ${flow.when}`, 0, H - 5);
+      font(10, ctx); ctx.fillStyle = '#7a7a7a'; ctx.fillText(shownTotal(short(flow.total)), 0, H - 5);
     },
   };
 }
@@ -249,41 +250,41 @@ function speedCard(el) {
 function agentsCard(el) {
   const W = 228, ROW = 42, tr = traces(W, 22, el);
   let ctx, H = 0;
-  const ago = ms => { const s = Math.round(ms / 1000); return s < 60 ? `${s}s ago` : `${Math.round(s / 60)} min ago`; };
+  const ago = ms => { const s = Math.round(ms / 1000); return s < 60 ? say('{n}s ago', { n: s }) : say('{n} min ago', { n: Math.round(s / 60) }); };
   return {
     step: tr.step,
     draw(t) {
       const list = shownAgents(5), want = 30 + Math.max(1, list.length) * ROW + 10;
       if (want !== H) { H = want; ctx = hd(el, W, H); }
       ctx.clearRect(0, 0, W, H);
-      const head = feed.stale ? 'Not live' : `${feed.agents.length} agent${feed.agents.length === 1 ? '' : 's'}`;
-      font(13, ctx, 'left', '"Schibsted Grotesk", system-ui, sans-serif'); ctx.fillStyle = INK; ctx.fillText(head, 0, 8);
+      const head = feed.stale ? say('Not live') : sayN(feed.agents.length, '{n} agent', '{n} agents');
+      font(13, ctx, 'left', `"Schibsted Grotesk", system-ui, ${JA_FONTS}, sans-serif`); ctx.fillStyle = INK; ctx.fillText(head, 0, 8);
       const hw = ctx.measureText(head).width;
-      font(11, ctx); ctx.fillStyle = DIM; ctx.fillText(fit(ctx, `· ${fmt(flow.rate)} ${flow.what || 'tokens'}/s`, W - STATUS_W - hw - 6), hw + 6, 9);
+      font(11, ctx); ctx.fillStyle = DIM; ctx.fillText(fit(ctx, say('· {rate} {what}/s', { rate: fmt(flow.rate), what: shownWhat() }), W - STATUS_W - hw - 6), hw + 6, 9);
       status(ctx, W, 8, t);
-      if (!list.length) { font(10, ctx); ctx.fillStyle = DIM; ctx.fillText('all quiet', 0, 30 + ROW / 2); }
+      if (!list.length) { font(10, ctx); ctx.fillStyle = DIM; ctx.fillText(say('all quiet'), 0, 30 + ROW / 2); }
       const T = performance.now();
       list.forEach((g, i) => {
         const y = 32 + i * ROW;
         ctx.fillStyle = rgb(g.project, g.on ? 1 : 0.5); ctx.fillRect(0, y - 3.5, 7, 7);
         // The right-hand figures first, then the names in what room they leave.
         font(10, ctx, 'right'); ctx.fillStyle = g.rate >= 1 ? INK : DIM;
-        const rate = g.rate >= 1 ? fmt(g.rate) + '/s' : '–', rw = ctx.measureText(rate).width;
+        const rate = g.rate >= 1 ? say('{n}/s', { n: fmt(g.rate) }) : '–', rw = ctx.measureText(rate).width;
         ctx.fillText(rate, W, y);
         font(11, ctx); ctx.fillStyle = g.on ? INK : DIM; ctx.fillText(fit(ctx, (g.kind === 'subagent' ? '↳ ' : '') + g.model, W - 13 - rw - 8), 13, y);
         tr.stroke(ctx, g, 0, W, y + 14, 7, 1);
         font(9, ctx, 'right'); ctx.fillStyle = DIM;
         const last = g.lastN ? `${fmt(g.lastN)} · ${ago(T - g.last)}` : '', lw = ctx.measureText(last).width;
         ctx.fillText(last, W, y + 28);
-        font(9, ctx); ctx.fillText(fit(ctx, `${NAMES[g.project] || g.project} · ${g.on ? STATES[g.state] || 'working' : 'idle'}`, W - lw - 8), 0, y + 28);
+        font(9, ctx); ctx.fillText(fit(ctx, `${NAMES[g.project] || g.project} · ${say(g.on ? STATES[g.state] || 'working' : 'idle')}`, W - lw - 8), 0, y + 28);
       });
     },
   };
 }
 export const CARDS = {
-  classic: { name: 'Agents and today', note: 'What they’re doing, the rate, and each project’s tokens today.', make: el => { card(el); } },
-  speed: { name: 'Speed', note: 'The rate large, the last minute with a tick per turn, and a level meter per project.', make: speedCard },
-  agents: { name: 'Agents, live', note: 'A row per agent: its rate, a trace that kicks as its turns land, what it’s doing, its last turn.', make: agentsCard },
+  classic: { name: say('Agents and today'), note: say('What they’re doing, the rate, and each project’s tokens today.'), make: el => { card(el); } },
+  speed: { name: say('Speed'), note: say('The rate large, the last minute with a tick per turn, and a level meter per project.'), make: speedCard },
+  agents: { name: say('Agents, live'), note: say('A row per agent: its rate, a trace that kicks as its turns land, what it’s doing, its last turn.'), make: agentsCard },
 };
 
 // ---- One bubble -------------------------------------------------------------------------------------------------
@@ -303,7 +304,7 @@ export function bubble(root, { style = 'orb', open: what = 'haul', app = false, 
   else if (what && MACHINES[what]) layout = what;
   // Until the first stats come in: a ring turns round the ball, and what it opens into says so.
   const wait = document.createElement('div');
-  wait.className = 'wait'; wait.textContent = 'Reading your tokens…';
+  wait.className = 'wait'; wait.textContent = say('Reading your tokens…');
   const born = performance.now();
   // For the app: the full size the window needs (CSS px from the bottom right), and the parts that take the pointer.
   const msg = (name, body) => window.webkit?.messageHandlers?.[name]?.postMessage(body);
@@ -348,7 +349,7 @@ export function bubble(root, { style = 'orb', open: what = 'haul', app = false, 
       shell.classList.toggle('loading', loading);
       if (loading) artEl.append(wait); else wait.remove();
     }
-    if (loading && performance.now() - born > 15000) wait.textContent = 'Waiting for agent-stats…';
+    if (loading && performance.now() - born > 15000) wait.textContent = say('Waiting for agent-stats…');
   } };
   const stop = run(layout ? [[artEl, layout]] : [], cv ? [glow, cv] : [glow]);
   demo();

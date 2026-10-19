@@ -5,6 +5,7 @@
 // instead of jumping once a second. The pieces here are shown by flow.html; the bubbles, cards and fields built from
 // them by bubble.js, and two fields join the lab's MACHINES (a dashboard, and the trucks at speed).
 import { run, feed, onUpdate, haul, HAUL, haulH, MACHINES, PROJECTS, SHORT, RGB, shade, MONO, KINDS, KIND, countedToday, setCounting } from './lab.js';
+import { t as say } from './i18n.js';
 
 // ---- The flow ----------------------------------------------------------------------------------------------------
 // Spreads: { a, b, n, p } a project's new tokens over [a, b) (performance.now ms); { a, b, n, o, id, p } an agent's
@@ -21,7 +22,7 @@ const over = (since, live) => live ? Math.max(2500, Math.min(8000, since)) : 150
 // some and an agent-stats that splits each project's tokens by kind (0.7 on), the totals and rates are the projects';
 // otherwise they're the agents' turns, kind by kind, and `total` counts them from `since` (output alone from the
 // relay's count for today). `what` names them ('' for all), `label` says what `total` is.
-export const flow = { rate: 0, out: 0, of: {}, total: 0, shown: 0, history: [], turns: [], agents: new Map(), kinds: KINDS, what: '', label: 'TOKENS TODAY', when: 'today', since: 0 };
+export const flow = { rate: 0, out: 0, of: {}, total: 0, shown: 0, history: [], turns: [], agents: new Map(), kinds: KINDS, what: '', label: say('{what} TODAY', { what: say('TOKENS') }), when: 'today', since: 0 };
 export function setKinds(list) {
   const k = KINDS.filter(x => list.includes(x));
   flow.kinds = k.length ? k : KINDS;
@@ -70,8 +71,12 @@ onUpdate((d, source, live) => {
   if (whole) flow.total = Object.values(today).reduce((a, b) => a + b, 0);
   else if (outToday != null) flow.total = outToday;
   flow.when = whole || outToday != null ? 'today' : 'since ' + new Date(flow.since).toTimeString().slice(0, 5);
-  flow.label = `${all() ? 'TOKENS' : flow.what.toUpperCase()} ${flow.when.toUpperCase()}`;
+  const what = all() ? say('TOKENS') : flow.kinds.map(x => say(KIND[x])).join(' + ').toUpperCase();
+  flow.label = flow.when === 'today' ? say('{what} TODAY', { what }) : say('{what} SINCE {time}', { what, time: flow.when.slice(6) });
 });
+// For the labels: what counts ('tokens' for all of it), and today's total so far, in the page's language.
+export const shownWhat = () => flow.what ? flow.kinds.map(x => say(KIND[x])).join(' + ') : say('tokens');
+export const shownTotal = n => flow.when === 'today' ? say('{n} today', { n }) : say('{n} since {time}', { n, time: flow.when.slice(6) });
 setKinds((new URLSearchParams(location.search).get('kinds') || KINDS.join()).split(','));
 // Runs on its own, ahead of whatever draws from it.
 function step(dt, T) {
@@ -131,7 +136,7 @@ onTurn(e => { flashAt = e.at / 1000; });
 export function status(ctx, x, y, t) {
   const live = feed.live && !feed.stale, lit = Math.max(0, 1 - (t - flashAt) / 0.4);
   font(9, ctx, 'right'); ctx.fillStyle = DIM;
-  ctx.fillText(feed.stale ? 'not live' : live ? 'live' : 'every 15 s', x - 8, y);
+  ctx.fillText(say(feed.stale ? 'not live' : live ? 'live' : 'every 15 s'), x - 8, y);
   ctx.fillStyle = live ? `rgba(98, 214, 120, ${0.45 + lit * 0.55})` : DIM;
   ctx.beginPath(); ctx.arc(x - 2, y, 2 + lit * 1.2, 0, 7); ctx.fill();
 }
@@ -299,7 +304,7 @@ export function tachometer(ctx, D, { ball = true } = {}) {
         ctx.strokeStyle = shade(p, 1.05); ctx.beginPath(); ctx.arc(c, c, r, a, a + s); ctx.stroke(); a += s;
       }
       font(Math.round(D * 0.2), ctx, 'center'); ctx.fillStyle = INK; ctx.fillText(fmt(flow.rate), c, c - D * 0.02);
-      font(Math.round(D * 0.11), ctx, 'center'); ctx.fillStyle = DIM; ctx.fillText('tok/s', c, c + D * 0.17);
+      font(Math.round(D * 0.11), ctx, 'center'); ctx.fillStyle = DIM; ctx.fillText(say('tok/s'), c, c + D * 0.17);
     },
   };
 }
@@ -337,10 +342,10 @@ function odometer(el) {
       const X = 140;
       font(26, ctx); ctx.fillStyle = INK; ctx.fillText(fmt(flow.rate), X, 76);
       const rw = ctx.measureText(fmt(flow.rate)).width;
-      font(9, ctx); ctx.fillStyle = DIM; ctx.fillText(fit(ctx, `${flow.what || 'tokens'} / s`, W - X - rw - 10), X + rw + 6, 80);
-      ctx.fillText(`${flow.kinds.includes('out') ? `${Math.round(flow.out)} out / s · ` : ''}${flow.turns.length} turns a minute`, X, 98);
+      font(9, ctx); ctx.fillStyle = DIM; ctx.fillText(fit(ctx, say('{what} / s', { what: shownWhat() }), W - X - rw - 10), X + rw + 6, 80);
+      ctx.fillText(`${flow.kinds.includes('out') ? say('{n} out / s', { n: Math.round(flow.out) }) + ' · ' : ''}${say('{n} turns a minute', { n: flow.turns.length })}`, X, 98);
       spark(ctx, X, 108, W - 4 - X, 42);
-      font(7, ctx, 'right'); ctx.fillStyle = DIM; ctx.fillText('a minute', W - 4, 156);
+      font(7, ctx, 'right'); ctx.fillStyle = DIM; ctx.fillText(say('a minute'), W - 4, 156);
     },
   };
 }
@@ -354,19 +359,19 @@ function seismo(el) {
     step: tr.step,
     draw() {
       ctx.clearRect(0, 0, W, H);
-      font(9, ctx); ctx.fillStyle = DIM; ctx.fillText('TURNS', 4, 7);
-      font(8, ctx, 'right'); ctx.fillText('a spike is a turn · lines 5 s apart', W - 8, 7);
+      font(9, ctx); ctx.fillStyle = DIM; ctx.fillText(say('TURNS'), 4, 7);
+      font(8, ctx, 'right'); ctx.fillText(say('a spike is a turn · lines 5 s apart'), W - 8, 7);
       // The grid scrolls with the paper, so it moves even when nothing does.
       ctx.fillStyle = FAINT;
       for (let c = tr.head - (tr.head % (SPD * 5)); tr.head - c < TW; c -= SPD * 5) ctx.fillRect(X0 + TW - (tr.head - c), TOP, 1, H - TOP);
       const list = shownAgents(5), lh = Math.min(40, (H - TOP - 2) / Math.max(1, list.length));
-      if (!list.length) { font(9, ctx, 'center'); ctx.fillStyle = DIM; ctx.fillText('no agent working', X0 + TW / 2, TOP + (H - TOP) / 2); }
+      if (!list.length) { font(9, ctx, 'center'); ctx.fillStyle = DIM; ctx.fillText(say('no agent working'), X0 + TW / 2, TOP + (H - TOP) / 2); }
       // Each lane keeps to its own band: its kicks and their sizes don't reach the lanes round it.
       list.forEach((g, i) => {
         const top = TOP + lh * i, y0 = top + lh / 2, amp = lh / 2 - 2;
         ctx.fillStyle = shade(g.project, g.on ? 1 : 0.5); ctx.beginPath(); ctx.arc(8, y0 - 4, 2.5, 0, 7); ctx.fill();
         font(9, ctx); ctx.fillStyle = g.on ? INK : DIM; ctx.fillText(fit(ctx, (g.kind === 'subagent' ? '↳ ' : '') + g.model, X0 - 21), 15, y0 - 4);
-        font(8, ctx); ctx.fillStyle = DIM; ctx.fillText(fit(ctx, `${SHORT[g.project] || g.project} · ${g.on ? g.state || 'on' : 'idle'}`, X0 - 21), 15, y0 + 7);
+        font(8, ctx); ctx.fillStyle = DIM; ctx.fillText(fit(ctx, `${SHORT[g.project] || g.project} · ${say(g.on ? g.state || 'on' : 'idle')}`, X0 - 21), 15, y0 + 7);
         ctx.save(); ctx.beginPath(); ctx.rect(X0 - 2, top, W - X0 + 2, lh); ctx.clip();
         const pen = tr.stroke(ctx, g, X0, X0 + TW, y0, amp);
         if (pen) { ctx.fillStyle = shade(g.project, 1.4); ctx.beginPath(); ctx.arc(pen[0], pen[1], 2, 0, 7); ctx.fill(); }
@@ -394,12 +399,12 @@ function rain(el) {
     step: ty.step,
     draw() {
       ctx.clearRect(0, 0, W, H);
-      font(9, ctx); ctx.fillStyle = DIM; ctx.fillText('OUTPUT', 4, 7);
-      font(8, ctx); ctx.fillText(fit(ctx, `${ty.each === 1 ? 'a letter is a token' : `a letter is ${ty.each} tokens`} · a speck 2K read`, W - 100), 46, 7);
-      font(9, ctx, 'right'); ctx.fillStyle = INK; ctx.fillText(`${Math.round(flow.out)} / s`, W - 4, 7);
+      font(9, ctx); ctx.fillStyle = DIM; ctx.fillText(say('OUTPUT'), 4, 7);
+      font(8, ctx); ctx.fillText(fit(ctx, `${ty.each === 1 ? say('a letter is a token') : say('a letter is {n} tokens', { n: ty.each })} · ${say('a speck 2K read')}`, W - 100), 46, 7);
+      font(9, ctx, 'right'); ctx.fillStyle = INK; ctx.fillText(say('{n} / s', { n: Math.round(flow.out) }), W - 4, 7);
       ty.draw(ctx, 2, TOP, CW, CH, 10);
       font(8, ctx);
-      if (!ty.bands.length) { ctx.fillStyle = DIM; ctx.textAlign = 'center'; ctx.fillText('waiting for output', W / 2, TOP + (H - TOP - FOOT) / 2); }
+      if (!ty.bands.length) { ctx.fillStyle = DIM; ctx.textAlign = 'center'; ctx.fillText(say('waiting for output'), W / 2, TOP + (H - TOP - FOOT) / 2); }
       ty.bands.forEach((g, i) => {
         const x = Math.floor(i * ty.cols / ty.bands.length) * CW + 2, w = Math.floor((i + 1) * ty.cols / ty.bands.length) * CW + 2 - x;
         ctx.fillStyle = shade(g.project, 0.9); ctx.fillRect(x + 1, H - 7, 4, 4);
@@ -441,8 +446,8 @@ function meters(el) {
     draw() {
       if (metersH() !== H) { H = metersH(); ctx = hd(el, W, H); }
       ctx.clearRect(0, 0, W, H);
-      font(9, ctx); ctx.fillStyle = DIM; ctx.fillText('BY PROJECT', 4, 7);
-      font(9, ctx, 'right'); ctx.fillStyle = INK; ctx.fillText(`${fmt(flow.rate)} / s`, W - 4, 7);
+      font(9, ctx); ctx.fillStyle = DIM; ctx.fillText(say('BY PROJECT'), 4, 7);
+      font(9, ctx, 'right'); ctx.fillStyle = INK; ctx.fillText(say('{n} / s', { n: fmt(flow.rate) }), W - 4, 7);
       PROJECTS.forEach((p, i) => {
         const y = 20 + i * 17, r = flow.of[p] || 0;
         font(9, ctx); ctx.fillStyle = shade(p, 1); ctx.fillText(fit(ctx, SHORT[p] || p, X0 - 10), 4, y + 4);
@@ -483,31 +488,31 @@ function haulFlow(el) {
       wheels(ctx, flow.shown, { x: 4, y: 6, n, dw: 12, dh: 22, size: 13, rate: flow.rate, col: rgba(lead()), sep: 5 });
       font(16, ctx); ctx.fillStyle = INK; ctx.fillText(fmt(flow.rate), X, 13);
       const rw = ctx.measureText(fmt(flow.rate)).width;
-      font(8, ctx); ctx.fillStyle = DIM; ctx.fillText('tok/s', X + rw + 4, 15);
-      ctx.fillText(fit(ctx, `${flow.kinds.includes('out') ? `${Math.round(flow.out)} out/s · ` : ''}${flow.turns.length}/min`, W - 70 - X), X, 28);
+      font(8, ctx); ctx.fillStyle = DIM; ctx.fillText(say('tok/s'), X + rw + 4, 15);
+      ctx.fillText(fit(ctx, `${flow.kinds.includes('out') ? say('{n} out/s', { n: Math.round(flow.out) }) + ' · ' : ''}${say('{n}/min', { n: flow.turns.length })}`, W - 70 - X), X, 28);
       status(ctx, W - 4, 6, t);
       spark(ctx, W - 64, 13, 60, 18);
     },
   };
 }
-MACHINES.dash = { make: dash, size: () => [360, 344], name: 'Throughput dashboard',
-  note: 'The odometer over the seismograph: today’s tokens rolling at their rate, and every agent’s turns as they land.' };
-MACHINES.haulflow = { make: haulFlow, size: () => [320, 34 + haulH(HAUL.haul)], name: 'Trucks, at speed', trucks: true,
-  note: 'The trucks under an odometer strip; each line says its tokens a second, a light runs along its bar as fast, cursors flare on a turn.' };
+MACHINES.dash = { make: dash, size: () => [360, 344], name: say('Throughput dashboard'),
+  note: say('The odometer over the seismograph: today’s tokens rolling at their rate, and every agent’s turns as they land.') };
+MACHINES.haulflow = { make: haulFlow, size: () => [320, 34 + haulH(HAUL.haul)], name: say('Trucks, at speed'), trucks: true,
+  note: say('The trucks under an odometer strip; each line says its tokens a second, a light runs along its bar as fast, cursors flare on a turn.') };
 
 // ---- Running them ------------------------------------------------------------------------------------------------
 export const PIECES = {
-  odometer: { make: odometer, size: () => [360, 158], name: 'Odometer',
-    note: 'Today’s tokens on wheels that roll at the rate they come in; a needle and the last minute of the rate.' },
-  seismo: { make: seismo, size: () => [360, 176], name: 'Seismograph',
-    note: 'A trace per agent: it trembles while its tokens flow and kicks when a turn lands, the turn’s size over the spike.' },
-  rain: { make: rain, size: () => [360, 200], name: 'Token rain',
-    note: 'The output, a letter per token, typed down each agent’s band at the speed it comes; cache reads fall as dust.' },
-  meters: { make: meters, size: () => [240, metersH()], name: 'Level meters',
-    note: 'Tokens a second per project, on a log scale, with the peak held a moment.' },
-  tach: { make: tachPiece(56), size: () => [56, 56], name: 'Tachometer bubble',
-    note: 'For bubble mode: the rate in an arc split by project, vanes that spin with it, a ripple per turn.' },
-  tachL: { make: tachPiece(120), size: () => [120, 120], name: 'Tachometer, large', note: 'The same, bigger, to see it.' },
+  odometer: { make: odometer, size: () => [360, 158], name: say('Odometer'),
+    note: say('Today’s tokens on wheels that roll at the rate they come in; a needle and the last minute of the rate.') },
+  seismo: { make: seismo, size: () => [360, 176], name: say('Seismograph'),
+    note: say('A trace per agent: it trembles while its tokens flow and kicks when a turn lands, the turn’s size over the spike.') },
+  rain: { make: rain, size: () => [360, 200], name: say('Token rain'),
+    note: say('The output, a letter per token, typed down each agent’s band at the speed it comes; cache reads fall as dust.') },
+  meters: { make: meters, size: () => [240, metersH()], name: say('Level meters'),
+    note: say('Tokens a second per project, on a log scale, with the peak held a moment.') },
+  tach: { make: tachPiece(56), size: () => [56, 56], name: say('Tachometer bubble'),
+    note: say('For bubble mode: the rate in an arc split by project, vanes that spin with it, a ripple per turn.') },
+  tachL: { make: tachPiece(120), size: () => [120, 120], name: say('Tachometer, large'), note: say('The same, bigger, to see it.') },
 };
 // The pieces that make a widget on their own are layouts too (index.html ?only=<piece>, a field for the bubble).
 for (const k of ['odometer', 'seismo', 'rain', 'meters']) MACHINES[k] = { ...PIECES[k], make: el => ({ reorders: true, ...PIECES[k].make(el) }), flow: true };

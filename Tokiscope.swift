@@ -8,6 +8,7 @@
 // Macs sleep. Or from a relay, when one is set and no hub can be reached (RelayFeed). Both are streamed, so a change
 // shows within a second or two, and polled when there is no stream.
 // It updates itself (Sparkle) from the GitHub releases, which build.sh and dist.sh make.
+// It speaks English or Japanese (L, ja.lproj/Localizable.strings): the Mac's language, or the one Settings picks.
 // The window stays at the full size the page asks for (it never resizes on hover, which would make the web view flash)
 // and lets the pointer through except over the bubble and whatever is open.
 
@@ -57,7 +58,24 @@ private enum Pref {
         get { let k = (d.string(forKey: "scene") ?? "").filter { $0.isASCII && $0.isLetter }.lowercased(); return k.isEmpty ? "auto" : k }
         set { d.set(newValue, forKey: "scene") }
     }
+    // The language of the menus, alerts and pages: "auto" (the Mac's), "en" or "ja".
+    static var language: String {
+        get { let l = d.string(forKey: "language") ?? "auto"; return ["auto", "en", "ja"].contains(l) ? l : "auto" }
+        set { d.set(newValue, forKey: "language") }
+    }
 }
+
+// The language in use: the one Settings picks, else Japanese when the Mac's first language is, else English.
+enum Lang {
+    static var system: String { Locale.preferredLanguages.first?.hasPrefix("ja") == true ? "ja" : "en" }
+    static var code: String { Pref.language == "auto" ? system : Pref.language }
+    // The Japanese for each English string (ja.lproj/Localizable.strings), read once.
+    static let ja: [String: String] = Bundle.main.path(forResource: "Localizable", ofType: "strings", inDirectory: nil, forLocalization: "ja")
+        .flatMap { NSDictionary(contentsOfFile: $0) as? [String: String] } ?? [:]
+}
+// `s` in the language in use; the English is the key. Read each time, so a new choice in Settings shows at once.
+func L(_ s: String) -> String { Lang.code == "ja" ? Lang.ja[s] ?? s : s }
+func L(_ format: String, _ args: CVarArg...) -> String { String(format: L(format), arguments: args) }
 
 private extension NSRect { var area: CGFloat { isNull ? 0 : width * height } }
 
@@ -126,15 +144,17 @@ final class TodayView: NSView {
         }
         let size = { (s: String, font: NSFont) in (s as NSString).size(withAttributes: [.font: font]) }
         var y: CGFloat = 8
-        let big = NSFont.systemFont(ofSize: 22, weight: .semibold), what = (d["what"] as? String) ?? "tokens"
-        let total = TodayView.short(num("total"))
+        // What counts, as the page names it: "tokens", "output", "input + output".
+        let what = ((d["what"] as? String) ?? "tokens").components(separatedBy: " + ").map { L($0) }.joined(separator: " + ")
+        let big = NSFont.systemFont(ofSize: 22, weight: .semibold), total = TodayView.short(num("total"))
         text(total, NSPoint(x: pad, y: y), big, .labelColor)
-        text("\(what) today", NSPoint(x: pad + size(total, big).width + 6, y: y + 8), .systemFont(ofSize: 12), .secondaryLabelColor)
+        text(L("%@ today", what), NSPoint(x: pad + size(total, big).width + 6, y: y + 8), .systemFont(ofSize: 12), .secondaryLabelColor)
         y += 30
         let mono = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         let agents = Int(num("agents")), working = Int(num("working"))
-        let line = d["stale"] as? Bool == true ? "Not live"
-            : "\(TodayView.short(num("rate")))/s now · \(agents) agent\(agents == 1 ? "" : "s")\(working > 0 && working < agents ? ", \(working) working" : "")"
+        let line = d["stale"] as? Bool == true ? L("Not live")
+            : L("%@/s now", TodayView.short(num("rate"))) + " · " + (agents == 1 ? L("1 agent") : L("%ld agents", agents))
+                + (working > 0 && working < agents ? L(", %ld working", working) : "")
         text(line, NSPoint(x: pad, y: y), mono, .secondaryLabelColor)
         y += 18
         // The last minute's rate.
@@ -167,7 +187,8 @@ final class TodayView: NSView {
         }
         // How fresh it is.
         let updated = num("updated"), ago = updated > 0 ? Int(Date().timeIntervalSince1970 - updated / 1000) : -1
-        let fresh = ago < 0 ? "Connecting…" : "\(d["live"] as? Bool == true ? "Live" : "Updated") · \(ago < 60 ? "\(max(0, ago))s" : "\(ago / 60) min") ago"
+        let fresh = ago < 0 ? L("Connecting…")
+            : (d["live"] as? Bool == true ? L("Live") : L("Updated")) + " · " + (ago < 60 ? L("%lds ago", max(0, ago)) : L("%ld min ago", ago / 60))
         text(fresh, NSPoint(x: pad, y: y + 4), .systemFont(ofSize: 10), .tertiaryLabelColor)
     }
 }
@@ -472,7 +493,7 @@ enum Stats {
         let e = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         p.waitUntilExit()
         guard p.terminationStatus == 0 else {
-            throw Failure(message: [e, o].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? "\(program.lastPathComponent) \(args.first ?? "") failed")
+            throw Failure(message: [e, o].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? L("%@ %@ failed", program.lastPathComponent, args.first ?? ""))
         }
         return o
     }
@@ -487,7 +508,7 @@ enum Stats {
     static func json(_ args: [String], timeout: TimeInterval = 60) throws -> Any {
         let out = try exec(args + ["--json"], timeout: timeout)
         guard let v = try? JSONSerialization.jsonObject(with: Data(out.utf8)) else {
-            throw Failure(message: "agent-stats \(args.prefix(2).joined(separator: " ")) didn't answer in JSON.")
+            throw Failure(message: L("agent-stats %@ didn't answer in JSON.", args.prefix(2).joined(separator: " ")))
         }
         return v
     }
@@ -528,9 +549,9 @@ enum Stats {
         do { try job.register() } catch {
             if job.status == .requiresApproval {
                 SMAppService.openSystemSettingsLoginItems()
-                throw Failure(message: "macOS asks you to allow Tokiscope's background items: turn Tokiscope on in System Settings › General › Login Items & Extensions, then try again.")
+                throw Failure(message: L("macOS asks you to allow Tokiscope's background items: turn Tokiscope on in System Settings › General › Login Items & Extensions, then try again."))
             }
-            throw Failure(message: "Couldn't start agent-stats (\(error.localizedDescription)).")
+            throw Failure(message: L("Couldn't start agent-stats (%@).", error.localizedDescription))
         }
     }
     static func restart(_ label: String) throws {
@@ -548,7 +569,7 @@ enum Stats {
             if up { return }
             Thread.sleep(forTimeInterval: 0.5)
         }
-        throw Failure(message: "The hub didn't start (its log: ~/.local/state/agent-stats/logs/hub.log).")
+        throw Failure(message: L("The hub didn't start (its log: ~/.local/state/agent-stats/logs/hub.log)."))
     }
     // This Mac's name on dashboards, unless config.toml says one already.
     static func prepareJoin() { try? writeLabel() }
@@ -565,7 +586,7 @@ enum Stats {
     // The `agent-stats join <url> --code <code>` line `hub pair` prints.
     private static func joinLine(_ out: String) throws -> String {
         guard let line = out.split(separator: "\n").map(String.init).first(where: { $0.hasPrefix("agent-stats join ") }) else {
-            throw Failure(message: "agent-stats hub pair didn't print a code.")
+            throw Failure(message: L("agent-stats hub pair didn't print a code."))
         }
         return line
     }
@@ -605,7 +626,7 @@ enum Stats {
         let id = hubId ?? ""
         let config = (try? String(contentsOf: configToml, encoding: .utf8)) ?? ""
         if id.isEmpty || !config.contains("\"\(id)\"") {
-            guard let p = parse(try joinLine(try exec(["hub", "pair", "--label", label]))) else { throw Failure(message: "agent-stats hub pair didn't print a code.") }
+            guard let p = parse(try joinLine(try exec(["hub", "pair", "--label", label]))) else { throw Failure(message: L("agent-stats hub pair didn't print a code.")) }
             try exec(["join", localHub, "--code", p.code])
         }
     }
@@ -657,7 +678,7 @@ enum Stats {
     // Opens Terminal with `command` (ssh-copy-id, which asks for the password there), without asking for Automation.
     static func inTerminal(_ command: String) throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("tokiscope-\(UUID().uuidString.prefix(8)).command")
-        try write(file, "#!/bin/sh\n\(command)\necho\necho 'Done: go back to Tokiscope and choose Retry.'\n")
+        try write(file, "#!/bin/sh\n\(command)\necho\necho \(shellQuoted(L("Done: go back to Tokiscope and choose Retry.")))\n")
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
         let terminal = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
         NSWorkspace.shared.open([file], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
@@ -667,7 +688,7 @@ enum Stats {
 
     // Another Mac's hub, from the line its Add Machine… shows.
     static func join(_ line: String) throws {
-        guard let p = parse(line) else { throw Failure(message: "Paste the whole line the main Mac's Add Machine… shows: agent-stats join http://… --code …") }
+        guard let p = parse(line) else { throw Failure(message: L("Paste the whole line the main Mac's Add Machine… shows: agent-stats join http://… --code …")) }
         try writeLabel()
         try exec(["join", p.url, "--code", p.code])
         try start(report)
@@ -758,12 +779,12 @@ enum Stats {
                 case ("report", "STATS_MACHINE"): config = setting(config, "machine", v)
                 case ("report", "STATS_TZ"): config = setting(config, "timezone", v)
                 case ("report", "HUB_URL") where before.contains("\"\(v.hasSuffix("/") ? String(v.dropLast()) : v)\""): break
-                default: left.append("\(k) for \(r == "report" ? "the reporter" : "the \(r)")")
+                default: left.append(L("%@ for %@", k, ["report": L("the reporter"), "hub": L("the hub"), "updater": L("the updater")][r] ?? r))
                 }
             }
         }
         guard left.isEmpty else {
-            throw Failure(message: "agent-stats here gets settings from its services' environment that Tokiscope's don't carry (\(left.joined(separator: ", "))). Move them into config.toml or hub.toml (see agent-stats' docs/ARCHITECTURE.md), then try again. Nothing was changed.")
+            throw Failure(message: L("agent-stats here gets settings from its services' environment that Tokiscope's don't carry (%@). Move them into config.toml or hub.toml (see agent-stats' docs/ARCHITECTURE.md), then try again. Nothing was changed.", left.joined(separator: ", ")))
         }
         if config != before { try write(configToml, config) }
     }
@@ -783,9 +804,9 @@ enum Stats {
     // The jobs this Mac's setup needs, started afresh: whatever macOS had registered for them is dropped first.
     static func startAfresh() throws {
         guard separate.filter({ $0 != "relay" }).isEmpty else {
-            throw Failure(message: "agent-stats runs on its own here: Let Tokiscope Run agent-stats… takes it over.")
+            throw Failure(message: L("agent-stats runs on its own here: Let Tokiscope Run agent-stats… takes it over."))
         }
-        guard isHub || joined else { throw Failure(message: "This Mac isn't counting yet: Start Counting in Settings › Machines.") }
+        guard isHub || joined else { throw Failure(message: L("This Mac isn't counting yet: Start Counting in Settings › Machines.")) }
         try stop()
         if isHub { try start(hubJob); try start(updater); try waitForHub() }
         if joined { try start(report) }
@@ -797,7 +818,7 @@ enum Stats {
     // Stops the app's jobs (config and stats stay).
     static func stop() throws {
         for job in [report, hubJob, updater] where [.enabled, .requiresApproval].contains(job.status) {
-            do { try job.unregister() } catch { throw Failure(message: "Couldn't stop agent-stats (\(error.localizedDescription)).") }
+            do { try job.unregister() } catch { throw Failure(message: L("Couldn't stop agent-stats (%@).", error.localizedDescription)) }
         }
     }
 
@@ -895,7 +916,7 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
     override init() {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 300), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         super.init()
-        window.title = "Add a Machine"
+        window.title = L("Add a Machine")
         window.isReleasedWhenClosed = false
         window.delegate = self
         for s in [stack, found, progress, inviteBox] { s.orientation = .vertical; s.alignment = .leading; s.spacing = 8 }
@@ -911,15 +932,15 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
             stack.widthAnchor.constraint(equalToConstant: Self.width),
         ])
 
-        let refresh = ActionButton("Look Again") { [weak self] in self?.discover() }
+        let refresh = ActionButton(L("Look Again")) { [weak self] in self?.discover() }
         refresh.controlSize = .small
-        stack.addArrangedSubview(row([Self.heading("Found on your tailnet and local network"), NSView(), refresh]))
+        stack.addArrangedSubview(row([Self.heading(L("Found on your tailnet and local network")), NSView(), refresh]))
         stack.addArrangedSubview(found)
-        stack.addArrangedSubview(Self.heading("Somewhere else"))
-        target.placeholderString = "user@host, IP, or a name from ~/.ssh/config"
+        stack.addArrangedSubview(Self.heading(L("Somewhere else")))
+        target.placeholderString = L("user@host, IP, or a name from ~/.ssh/config")
         target.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         target.widthAnchor.constraint(equalToConstant: Self.inner - 90).isActive = true
-        let connect = ActionButton("Connect") { [weak self] in
+        let connect = ActionButton(L("Connect")) { [weak self] in
             guard let self else { return }
             let t = self.target.stringValue.trimmingCharacters(in: .whitespaces)
             if !t.isEmpty { self.add(t) }
@@ -928,7 +949,7 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
         stack.addArrangedSubview(progress)
         progress.isHidden = true
         stack.setCustomSpacing(20, after: progress)
-        stack.addArrangedSubview(Self.heading("No SSH? Run this on the machine"))
+        stack.addArrangedSubview(Self.heading(L("No SSH? Run this on the machine")))
         stack.addArrangedSubview(inviteBox)
         resetInvite()
     }
@@ -939,7 +960,7 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
             let st = (try? Stats.json(["fleet", "status"], timeout: 15)) as? [String: Any]
             DispatchQueue.main.async {
                 self.ourFleet = st?["fleetId"] as? String
-                if let name = st?["name"] as? String, !name.isEmpty { self.window.title = "Add a Machine to “\(name)”" }
+                if let name = st?["name"] as? String, !name.isEmpty { self.window.title = L("Add a Machine to “%@”", name) }
             }
         }
         fit()
@@ -995,7 +1016,7 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
 
     // ---- What agent-stats finds
     private func discover() {
-        set(found, [Self.text("Looking…", small: true)])
+        set(found, [Self.text(L("Looking…"), small: true)])
         DispatchQueue.global().async {
             let r = Result { try Stats.json(["fleet", "discover", "--timeout", "3s"], timeout: 30) }
             DispatchQueue.main.async {
@@ -1014,7 +1035,7 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
             return a < b
         }
         let views = sorted.map(machineRow)
-        set(found, views.isEmpty ? [Self.text("Nothing found. Is the machine on, and on your tailnet or this network? You can still connect to it below.", small: true)] : views)
+        set(found, views.isEmpty ? [Self.text(L("Nothing found. Is the machine on, and on your tailnet or this network? You can still connect to it below."), small: true)] : views)
     }
     private func machineRow(_ m: [String: Any]) -> NSView {
         let host = m["host"] as? String ?? m["name"] as? String ?? "?", name = m["name"] as? String ?? host
@@ -1023,17 +1044,18 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
         let sources = (m["sources"] as? [String] ?? []).map { ["tailscale": "Tailscale", "bonjour": "Bonjour"][$0] ?? $0 }
         var detail = [["linux": "Linux", "macos": "macOS", "windows": "Windows"][os ?? ""]].compactMap { $0 } + sources
         var trailing: NSView? = nil, dim = false, note: String?
-        if me { detail.append("this Mac"); trailing = Self.symbol("checkmark", .systemGreen); dim = true }
-        else if member { detail.append("in the fleet"); trailing = Self.symbol("checkmark", .systemGreen); dim = true }
-        else if !online { detail.append("offline"); dim = true }
-        else if os == "windows" { detail.append("not supported"); dim = true }
+        if me { detail.append(L("this Mac")); trailing = Self.symbol("checkmark", .systemGreen); dim = true }
+        else if member { detail.append(L("in the fleet")); trailing = Self.symbol("checkmark", .systemGreen); dim = true }
+        else if !online { detail.append(L("offline")); dim = true }
+        else if os == "windows" { detail.append(L("not supported")); dim = true }
         else {
             if let s = stats, let fleet = s["fleetId"] as? String, fleet != ourFleet, ["hub", "replica"].contains(s["role"] as? String ?? "") {
-                note = "Runs another fleet\((s["name"] as? String).map { " (“\($0)”)" } ?? ""): installing moves it to this one."
+                note = (s["name"] as? String).map { L("Runs another fleet (“%@”): installing moves it to this one.", $0) }
+                    ?? L("Runs another fleet: installing moves it to this one.")
             } else if os == "macos" {
-                note = "Has Tokiscope? Open it there and choose Join instead."
+                note = L("Has Tokiscope? Open it there and choose Join instead.")
             }
-            trailing = ActionButton("Install") { [weak self] in self?.add(host) }
+            trailing = ActionButton(L("Install")) { [weak self] in self?.add(host) }
         }
         let icon = Self.symbol(os == "macos" ? "laptopcomputer" : os == "linux" ? "server.rack" : os == "windows" ? "pc" : "desktopcomputer")
         let words = NSStackView(views: [Self.text(name, bold: true, width: Self.inner - 120), Self.text(detail.joined(separator: " · "), small: true, width: Self.inner - 120)]
@@ -1048,14 +1070,14 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
     private func add(_ target: String, replace: Bool = false) {
         stopping = true; adding?.terminate(); stopping = false
         rows = [:]
-        let stop = ActionButton("Stop") { [weak self] in self?.stopping = true; self?.adding?.terminate() }
+        let stop = ActionButton(L("Stop")) { [weak self] in self?.stopping = true; self?.adding?.terminate() }
         self.stop = stop
-        var views: [NSView] = [row([Self.text("Installing on \(target)", bold: true, width: Self.inner - 80), NSView(), stop])]
+        var views: [NSView] = [row([Self.text(L("Installing on %@", target), bold: true, width: Self.inner - 80), NSView(), stop])]
         for (key, title) in Self.steps {
             let spin = NSProgressIndicator(), mark = Self.symbol("circle", .tertiaryLabelColor)
             spin.style = .spinning; spin.controlSize = .small; spin.isHidden = true
             spin.widthAnchor.constraint(equalToConstant: 18).isActive = true
-            let t = Self.text(title, width: Self.inner - 40), d = Self.text("", small: true, width: Self.inner - 40)
+            let t = Self.text(L(title), width: Self.inner - 40), d = Self.text("", small: true, width: Self.inner - 40)
             d.isHidden = true
             let words = NSStackView(views: [t, d]); words.orientation = .vertical; words.alignment = .leading; words.spacing = 1
             let r = NSStackView(views: [spin, mark, words]); r.orientation = .horizontal; r.alignment = .firstBaseline; r.spacing = 6
@@ -1073,7 +1095,7 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
         }, done: { [weak self] status, said in
             guard let self, !ended else { return }
             self.adding = nil
-            self.failed(self.stopping ? "stopped" : "other", self.stopping ? "Stopped." : said.isEmpty ? "agent-stats stopped (status \(status))." : said, nil, target)
+            self.failed(self.stopping ? "stopped" : "other", self.stopping ? L("Stopped.") : said.isEmpty ? L("agent-stats stopped (status %d).", status) : said, nil, target)
         })
     }
     private func show(_ s: Step, _ state: String, _ detail: String?) {
@@ -1093,7 +1115,7 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
             adding = nil; stop?.isHidden = true
             for (k, _) in Self.steps { if let s = rows[k], !s.spin.isHidden || s.mark.contentTintColor != .systemGreen { show(s, "ok", nil) } }
             let who = e["label"] as? String ?? e["machine"] as? String ?? target
-            progress.addArrangedSubview(row([Self.symbol("checkmark.seal.fill", .systemGreen), Self.text("\(who) is part of the fleet and reports now.", bold: true, width: Self.inner - 30)]))
+            progress.addArrangedSubview(row([Self.symbol("checkmark.seal.fill", .systemGreen), Self.text(L("%@ is part of the fleet and reports now.", who), bold: true, width: Self.inner - 30)]))
             fit()
             onAdded?()
             discover()
@@ -1106,7 +1128,7 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
         if let s = rows[step] { show(s, state, e["detail"] as? String) }
         if state == "error" {
             adding = nil
-            failed(e["error"] as? String ?? "other", e["message"] as? String ?? "That didn't work.", e["hint"] as? String, target)
+            failed(e["error"] as? String ?? "other", e["message"] as? String ?? L("That didn't work."), e["hint"] as? String, target)
         }
         fit()
     }
@@ -1119,20 +1141,20 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
             let h = Self.text(hint, small: true); h.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
             views.append(h)
         }
-        let retry = ActionButton("Retry") { [weak self] in self?.add(target) }
+        let retry = ActionButton(L("Retry")) { [weak self] in self?.add(target) }
         var buttons: [NSView] = []
         switch kind {
         case "needs-key":
-            views.insert(Self.text("This Mac's SSH key isn't on \(target) yet. ssh-copy-id puts it there: it asks for the password once, in Terminal. (Or turn on Tailscale SSH on that machine.)", small: true), at: 1)
-            buttons = [ActionButton("Open Terminal (ssh-copy-id)", primary: true) { try? Stats.inTerminal("ssh-copy-id " + Stats.shellQuoted(target)) }, retry]
+            views.insert(Self.text(L("This Mac's SSH key isn't on %@ yet. ssh-copy-id puts it there: it asks for the password once, in Terminal. (Or turn on Tailscale SSH on that machine.)", target), small: true), at: 1)
+            buttons = [ActionButton(L("Open Terminal (ssh-copy-id)"), primary: true) { try? Stats.inTerminal("ssh-copy-id " + Stats.shellQuoted(target)) }, retry]
         case "taken":
             let name = target.split(separator: "@").last.map { String($0.split(separator: ".").first ?? $0) } ?? target
-            buttons = [ActionButton("Replace the Old “\(name)”", primary: true) { [weak self] in self?.add(target, replace: true) },
-                       ActionButton("Cancel") { [weak self] in self.map { $0.set($0.progress, []) } }]
+            buttons = [ActionButton(L("Replace the Old “%@”", name), primary: true) { [weak self] in self?.add(target, replace: true) },
+                       ActionButton(L("Cancel")) { [weak self] in self.map { $0.set($0.progress, []) } }]
         case "no-route-back":
             if Stats.hubOnLoopback {
-                views.append(Self.text("Only this Mac reaches its hub so far. Open it to your network (port \(Stats.hubPort), over Tailscale or your local network), then try again.", small: true))
-                buttons = [ActionButton("Open the Hub to the Network", primary: true) { [weak self] in self?.openHub? { self?.add(target) } }, retry]
+                views.append(Self.text(L("Only this Mac reaches its hub so far. Open it to your network (port %ld, over Tailscale or your local network), then try again.", Stats.hubPort), small: true))
+                buttons = [ActionButton(L("Open the Hub to the Network"), primary: true) { [weak self] in self?.openHub? { self?.add(target) } }, retry]
             } else { buttons = [retry] }
         case "unsupported", "stopped", "other-fleet": buttons = []   // trying again won't change it
         default: buttons = [retry]
@@ -1144,11 +1166,11 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
 
     // ---- The line to paste
     private func resetInvite() {
-        set(inviteBox, [Self.text("A one-time line that installs agent-stats and joins this fleet, for a machine this Mac can't reach by SSH (it must reach this Mac).", small: true),
-                        ActionButton("Make a Line") { [weak self] in self?.invite() }])
+        set(inviteBox, [Self.text(L("A one-time line that installs agent-stats and joins this fleet, for a machine this Mac can't reach by SSH (it must reach this Mac)."), small: true),
+                        ActionButton(L("Make a Line")) { [weak self] in self?.invite() }])
     }
     private func invite() {
-        set(inviteBox, [Self.text("Making a line…", small: true)])
+        set(inviteBox, [Self.text(L("Making a line…"), small: true)])
         let go = {
             DispatchQueue.global().async {
                 let r = Result { try Stats.json(["fleet", "invite"], timeout: 30) }
@@ -1158,9 +1180,9 @@ final class AddMachineWindow: NSObject, NSWindowDelegate {
                         return
                     }
                     let code = Self.text(line); code.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-                    self.set(self.inviteBox, [code, self.row([ActionButton("Copy") {
+                    self.set(self.inviteBox, [code, self.row([ActionButton(L("Copy")) {
                         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(line, forType: .string)
-                    }, Self.text("Works once, for 10 minutes.", small: true, width: 300), NSView()])])
+                    }, Self.text(L("Works once, for 10 minutes."), small: true, width: 300), NSView()])])
                 }
             }
         }
@@ -1341,7 +1363,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
 
     private func load() {
-        let page = "/lab/bubble.html?b=\(Pref.bubble)&open=\(Pref.open)&app=1&kinds=\(Pref.kinds.joined(separator: ","))&scene=\(Pref.scene)"
+        let page = "/lab/bubble.html?b=\(Pref.bubble)&open=\(Pref.open)&app=1&kinds=\(Pref.kinds.joined(separator: ","))&scene=\(Pref.scene)&lang=\(Lang.code)"
         guard let url = link(page) else { return }
         web.pageZoom = Pref.zoom
         hovering = false; hotRects = []; rectsTop = false; rectsLeft = false; isOpen = false; anchored = false   // the new page reports its own
@@ -1448,6 +1470,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         pointerTimer = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in self?.checkPointer() }
     }
     private func checkPointer() {
+        // A drag keeps the mouse till it ends; one whose button came up out of the window's sight (the pointer outran
+        // the bubble) ends now, or the window would stay the bubble's size.
+        if dragging {
+            if NSEvent.pressedMouseButtons & 1 == 0 { dragEnded() } else { if panel.ignoresMouseEvents { panel.ignoresMouseEvents = false }; return }
+        }
         // Until the page reports, the bubble's own corner counts.
         let p = NSEvent.mouseLocation, f = panel.frame, z = Pref.zoom
         let hot = hotRects.isEmpty ? [NSRect(x: 10, y: 10, width: 64, height: 64)] : hotRects
@@ -1456,7 +1483,6 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
                    y: rectsTop ? f.maxY - (r.minY + r.height) * z : f.minY + r.minY * z, width: r.width * z, height: r.height * z).contains(p)
         }
         if panel.ignoresMouseEvents == over { panel.ignoresMouseEvents = !over }
-        if dragging { return }
         if over {
             outside = 0
             if !hovering { hovering = true; web.evaluateJavaScript("window.bubble?.hover(true)") }
@@ -1497,7 +1523,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
             config.setURLSchemeHandler(pages, forURLScheme: BundlePages.scheme)
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 760),
                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-            w.title = "Tokiscope Settings"           // a title bar of its own, to move it by
+            w.title = L("Tokiscope Settings")        // a title bar of its own, to move it by
             w.appearance = NSAppearance(named: .darkAqua)
             w.backgroundColor = NSColor(white: 0.08, alpha: 1)
             w.minSize = NSSize(width: 560, height: 420)
@@ -1514,9 +1540,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         if settingsWindow?.isVisible == true {
             if let tab { settingsWeb?.evaluateJavaScript("window.settings?.set({ tab: '\(tab)' })") }
         } else {
-            let state = "b=\(Pref.bubble)&open=\(Pref.open)&kinds=\(Pref.kinds.joined(separator: ","))&scene=\(Pref.scene)"
-                + (tab.map { "&tab=\($0)" } ?? "")
-            if let url = link("/lab/settings.html?\(state)") { settingsWeb?.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)) }
+            loadSettings(tab)
             // The machines' state, while it shows.
             settingsTimer?.invalidate()
             settingsTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.refreshMembers(); self?.syncSettings() }
@@ -1527,6 +1551,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+    // The page, on `tab` if given, in the language in use.
+    private func loadSettings(_ tab: String?) {
+        let state = "b=\(Pref.bubble)&open=\(Pref.open)&kinds=\(Pref.kinds.joined(separator: ","))&scene=\(Pref.scene)&lang=\(Lang.code)"
+            + (tab.map { "&tab=\($0)" } ?? "")
+        if let url = link("/lab/settings.html?\(state)") { settingsWeb?.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)) }
     }
     // Closed, it stops: nothing runs in it until it is opened again.
     func windowWillClose(_ note: Notification) {
@@ -1542,14 +1572,17 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     private func settingsState() -> [String: Any] {
         var s: [String: Any] = [
             "b": Pref.bubble, "open": Pref.open, "kinds": Pref.kinds, "scene": Pref.scene,
-            "zoom": zooms.firstIndex { $0.1 == Pref.zoom } ?? 0, "zooms": zooms.map(\.0), "desktop": Pref.onDesktop, "welcome": Pref.welcome,
+            "zoom": zooms.firstIndex { $0.1 == Pref.zoom } ?? 0, "zooms": zooms.map { L($0.0) }, "desktop": Pref.onDesktop, "welcome": Pref.welcome,
             "login": SMAppService.mainApp.status == .enabled, "updates": updates != nil,
             "autoUpdates": updates?.updater.automaticallyChecksForUpdates ?? false,
             "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
-            "site": sites.firstIndex { $0.1 == Pref.site } ?? -1, "sites": sites.map(\.0), "relay": Pref.relay ?? "",
-            "source": (hub.route.map { "From the hub, \(URL(string: $0.url)?.host ?? $0.url)" }
-                       ?? (Pref.relay != nil ? "From the relay (no hub answers)" : "None: no hub answers"))
-                + ((hub.route != nil ? hub.live : relay.live) ? ", live" : ""),
+            "site": sites.firstIndex { $0.1 == Pref.site } ?? -1, "sites": sites.map { L($0.0) }, "relay": Pref.relay ?? "",
+            "source": (hub.route.map { L("From the hub, %@", URL(string: $0.url)?.host ?? $0.url) }
+                       ?? (Pref.relay != nil ? L("From the relay (no hub answers)") : L("None: no hub answers")))
+                + ((hub.route != nil ? hub.live : relay.live) ? L(", live") : ""),
+            // The languages to pick from, each named in itself; "auto" follows the Mac.
+            "language": Pref.language,
+            "languages": [["auto", L("System (%@)", Lang.system == "ja" ? "日本語" : "English")], ["en", "English"], ["ja", "日本語"]],
         ]
         guard Stats.bundled || Stats.setUp else { return s }
         // The other machines: those of the fleet (a Mac on its own has none).
@@ -1568,7 +1601,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
             "problems": statsProblems().map { ["text": $0.text, "button": $0.button, "do": $0.action] },
             "dashboard": Stats.isHub, "machines": others,
             "found": found.map { ["name": $0.name, "node": $0.node, "url": $0.url] },
-            "requests": requests.map { r in ["id": r["id"] as? String ?? "", "who": r["label"] as? String ?? r["machine"] as? String ?? "A machine",
+            "requests": requests.map { r in ["id": r["id"] as? String ?? "", "who": r["label"] as? String ?? r["machine"] as? String ?? L("A machine"),
                                              "digits": App.spaced(r["digits"] as? String ?? "")] },
         ] as [String: Any]
         return s
@@ -1577,11 +1610,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     private func statsProblems() -> [(text: String, button: String, action: String)] {
         guard busy == nil, Stats.setUp else { return [] }
         var p: [(String, String, String)] = []
-        if let replicaError { p.append(("This Mac isn't a replica yet: \(replicaError.prefix(160))", "Try Again", "retryReplica")) }
+        if let replicaError { p.append((L("This Mac isn't a replica yet: %@", String(replicaError.prefix(160))), L("Try Again"), "retryReplica")) }
         if Stats.bundled, !Stats.separate.filter({ $0 != "relay" }).isEmpty {
-            p.append(("agent-stats was installed on its own here, so Tokiscope doesn't run or update it.", "Let Tokiscope Run It…", "takeOver"))
+            p.append((L("agent-stats was installed on its own here, so Tokiscope doesn't run or update it."), L("Let Tokiscope Run It…"), "takeOver"))
         }
-        if Stats.bundled, Stats.stopped { p.append(("agent-stats is stopped: this Mac doesn't count its agents or keep the stats.", "Start agent-stats", "start")) }
+        if Stats.bundled, Stats.stopped { p.append((L("agent-stats is stopped: this Mac doesn't count its agents or keep the stats."), L("Start agent-stats"), "start")) }
         return p
     }
     private func pick(_ kind: String, _ key: String) {
@@ -1595,6 +1628,15 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         case "zoom": if let i = Int(key), zooms.indices.contains(i) { useZoom(i) }
         case "site": if let i = Int(key), sites.indices.contains(i) { useSite(i) }
         case "desktop": Pref.onDesktop = key == "1"; apply()
+        // Another language: the menus and alerts follow at once, the pages once loaded again (Settings on General,
+        // where it was picked).
+        case "language":
+            guard ["auto", "en", "ja"].contains(key), key != Pref.language else { return }
+            Pref.language = key
+            load()
+            settingsWindow?.title = L("Tokiscope Settings")
+            loadSettings("general")
+            syncSettings()
         // The rest may open an alert or a window: from the run loop, not inside the page's message.
         case "remove": soon { self.removeMachine(key) }
         case "request": soon { self.askRequest(id: key) }
@@ -1644,20 +1686,20 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         }
         if busy == nil, Stats.setUp, !requests.isEmpty {
             for (i, r) in requests.enumerated() {
-                let who = r["label"] as? String ?? r["machine"] as? String ?? "A machine"
-                add("\(who) Asks to Join (\(App.spaced(r["digits"] as? String ?? "")))…", #selector(askRequest(_:))).tag = i
+                let who = r["label"] as? String ?? r["machine"] as? String ?? L("A machine")
+                add(L("%@ Asks to Join (%@)…", who, App.spaced(r["digits"] as? String ?? "")), #selector(askRequest(_:))).tag = i
             }
             menu.addItem(.separator())
         }
         if let busy {
             menu.addItem(withTitle: busy, action: nil, keyEquivalent: "").isEnabled = false
         } else if Stats.bundled, !Stats.setUp || !statsProblems().isEmpty {
-            _ = add("agent-stats Needs Attention…", #selector(openMachines))
+            _ = add(L("agent-stats Needs Attention…"), #selector(openMachines))
         }
-        _ = add(panel.isVisible ? "Hide Bubble" : "Show Bubble", #selector(toggleShown))
-        add("Settings…", #selector(openSettings)).keyEquivalent = ","
+        _ = add(panel.isVisible ? L("Hide Bubble") : L("Show Bubble"), #selector(toggleShown))
+        add(L("Settings…"), #selector(openSettings)).keyEquivalent = ","
         menu.addItem(.separator())
-        let quit = menu.addItem(withTitle: "Quit Tokiscope", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = menu.addItem(withTitle: L("Quit Tokiscope"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         refreshMembers()                                  // for Settings, and the next time
     }
@@ -1690,14 +1732,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
 
     @objc private func editRelay() {
         let alert = NSAlert()
-        alert.messageText = "Stats Relay"
-        alert.informativeText = "Where the layouts and bubbles read the stats when no hub answers: a relay your hub publishes to (agent-stats relay serve), or a hub that serves /stats itself. The built-in pages read it through the app; a local copy needs one that allows http://localhost."
+        alert.messageText = L("Stats Relay")
+        alert.informativeText = L("Where the layouts and bubbles read the stats when no hub answers: a relay your hub publishes to (agent-stats relay serve), or a hub that serves /stats itself. The built-in pages read it through the app; a local copy needs one that allows http://localhost.")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
         field.stringValue = Pref.relay ?? ""
         alert.accessoryView = field
-        alert.addButton(withTitle: "Use")
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Use None")
+        alert.addButton(withTitle: L("Use"))
+        alert.addButton(withTitle: L("Cancel"))
+        alert.addButton(withTitle: L("Use None"))
         NSApp.activate(ignoringOtherApps: true)
         switch alert.runModal() {
         case .alertFirstButtonReturn:
@@ -1731,9 +1773,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
                 self.hub.fetch()
                 self.soon {
                     switch r {
-                    case .success(let note?): done?(note) ?? self.say("Done", note)
+                    case .success(let note?): done?(note) ?? self.say(L("Done"), note)
                     case .success(nil): break
-                    case .failure(let e): self.say("That Didn't Work", (e as? Stats.Failure)?.message ?? e.localizedDescription, style: .warning)
+                    case .failure(let e): self.say(L("That Didn't Work"), (e as? Stats.Failure)?.message ?? e.localizedDescription, style: .warning)
                     }
                 }
             }
@@ -1759,7 +1801,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     // asked. Other machines come in later, from Settings › Machines. Settings opens once, with a welcome. Start
     // Counting (Settings › Machines) does the same when the first launch couldn't.
     private func setUpQuietly(welcome: Bool) {
-        background("Starting to Count This Mac's Agents…", { try Stats.becomeHub(); return nil }) { _ in }
+        background(L("Starting to Count This Mac's Agents…"), { try Stats.becomeHub(); return nil }) { _ in }
         guard welcome else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard Stats.setUp else { return }
@@ -1788,13 +1830,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         for m in machines where m["self"] as? Bool != true {
             guard let s = m["agentStats"] as? [String: Any], ["hub", "replica"].contains(s["role"] as? String ?? ""),
                   let id = s["fleetId"] as? String, id != ours, let url = s["url"] as? String, !fleets.contains(where: { $0.fleetId == id }) else { continue }
-            fleets.append(Found(fleetId: id, name: s["name"] as? String ?? "your fleet", node: s["node"] as? String ?? m["name"] as? String ?? url, url: url))
+            fleets.append(Found(fleetId: id, name: s["name"] as? String ?? L("your fleet"), node: s["node"] as? String ?? m["name"] as? String ?? url, url: url))
         }
         return fleets
     }
     // Join Another Mac…: the fleets nearby to pick from, or a Mac's address.
     private func joinAnother() {
-        background("Looking for Your Machines…") { [weak self] in
+        background(L("Looking for Your Machines…")) { [weak self] in
             let list = (try? Stats.json(["fleet", "discover", "--timeout", "3s"], timeout: 30)) as? [[String: Any]] ?? []
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -1806,18 +1848,18 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
     private func offerFleets(_ fleets: [Found]) {
         let alert = NSAlert()
-        alert.messageText = "Join Another Mac"
-        alert.informativeText = "This Mac joins the machines another Mac already keeps the stats of: then each shows all of them, and this Mac's stats so far go with it."
-            + (fleets.isEmpty ? "\n\nNo other Mac answered on your tailnet or local network. Give its address instead."
-               : fleets.count == 1 ? "\n\nFound “\(fleets[0].name)” on \(fleets[0].node)." : "\n\nFound these:")
+        alert.messageText = L("Join Another Mac")
+        alert.informativeText = L("This Mac joins the machines another Mac already keeps the stats of: then each shows all of them, and this Mac's stats so far go with it.")
+            + "\n\n" + (fleets.isEmpty ? L("No other Mac answered on your tailnet or local network. Give its address instead.")
+               : fleets.count == 1 ? L("Found “%@” on %@.", fleets[0].name, fleets[0].node) : L("Found these:"))
         let pick = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26))
         if fleets.count > 1 {
-            pick.addItems(withTitles: fleets.map { "\($0.name) (on \($0.node))" })
+            pick.addItems(withTitles: fleets.map { L("%@ (on %@)", $0.name, $0.node) })
             alert.accessoryView = pick
         }
-        if !fleets.isEmpty { alert.addButton(withTitle: fleets.count == 1 ? "Join “\(fleets[0].name)”" : "Join") }
-        alert.addButton(withTitle: "Join by Address…")
-        alert.addButton(withTitle: "Cancel")
+        if !fleets.isEmpty { alert.addButton(withTitle: fleets.count == 1 ? L("Join “%@”", fleets[0].name) : L("Join")) }
+        alert.addButton(withTitle: L("Join by Address…"))
+        alert.addButton(withTitle: L("Cancel"))
         NSApp.activate(ignoringOtherApps: true)
         var r = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
         if fleets.isEmpty { r += 1 }
@@ -1833,31 +1875,31 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     private func requestJoin(_ url: String, _ name: String) {
         let digits = NSTextField(labelWithString: "· · · ·")
         digits.font = .monospacedDigitSystemFont(ofSize: 34, weight: .semibold); digits.alignment = .center
-        let note = NSTextField(wrappingLabelWithString: "Asking \(url)…")
+        let note = NSTextField(wrappingLabelWithString: L("Asking %@…", url))
         note.textColor = .secondaryLabelColor; note.font = .systemFont(ofSize: NSFont.smallSystemFontSize); note.alignment = .center
         let box = NSStackView(views: [digits, note])
         box.orientation = .vertical; box.spacing = 6; box.frame = NSRect(x: 0, y: 0, width: 320, height: 76)
         digits.widthAnchor.constraint(equalToConstant: 320).isActive = true; note.preferredMaxLayoutWidth = 320
         let alert = NSAlert()
-        alert.messageText = "Approve This Mac on Another Mac"
-        alert.informativeText = "On any Mac of “\(name)”, Tokiscope asks whether \(Stats.label) may join. Check that it shows the same digits, then approve it there."
+        alert.messageText = L("Approve This Mac on Another Mac")
+        alert.informativeText = L("On any Mac of “%@”, Tokiscope asks whether %@ may join. Check that it shows the same digits, then approve it there.", name, Stats.label)
         alert.accessoryView = box
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L("Cancel"))
         Stats.prepareJoin()
         var outcome: String?, said = ""
-        busy = "Asking to Join “\(name)”…"
+        busy = L("Asking to Join “%@”…", name)
         // This Mac's own stats, if it kept any, go into the fleet it joins.
         let p = Stats.stream(["fleet", "request", url, "--label", Stats.label, "--json"] + (Stats.isHub ? ["--force"] : []), line: { e in
             switch e["state"] as? String {
             case "pending":
                 digits.stringValue = App.spaced(e["digits"] as? String ?? "")
-                note.stringValue = "Waiting for approval. The request lasts 10 minutes."
+                note.stringValue = L("Waiting for approval. The request lasts 10 minutes.")
             case let s? where ["approved", "denied", "expired"].contains(s): outcome = s; NSApp.stopModal()
             default: break
             }
         }, done: { status, err in
             guard outcome == nil else { return }
-            outcome = "failed"; said = err.isEmpty ? "agent-stats fleet request stopped (status \(status))." : err
+            outcome = "failed"; said = err.isEmpty ? L("agent-stats fleet request stopped (status %d).", status) : err
             NSApp.stopModal()
         })
         NSApp.activate(ignoringOtherApps: true)
@@ -1866,13 +1908,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         switch outcome {
         case nil: p.terminate()                           // cancelled
         case "approved":
-            background("Starting agent-stats…") {
+            background(L("Starting agent-stats…")) {
                 try Stats.startReplica()
-                return "This Mac is part of “\(name)”: it keeps the fleet's stats and counts its agents."
+                return L("This Mac is part of “%@”: it keeps the fleet's stats and counts its agents.", name)
             }
-        case "denied": say("Not Approved", "A Mac of “\(name)” turned the request down.")
-        case "expired": say("The Request Expired", "Nobody approved it within 10 minutes. Ask again, and approve it on a Mac of the fleet while it waits.")
-        default: say("That Didn't Work", said, style: .warning)
+        case "denied": say(L("Not Approved"), L("A Mac of “%@” turned the request down.", name))
+        case "expired": say(L("The Request Expired"), L("Nobody approved it within 10 minutes. Ask again, and approve it on a Mac of the fleet while it waits."))
+        default: say(L("That Didn't Work"), said, style: .warning)
         }
     }
 
@@ -1880,24 +1922,24 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     // showed. With an agent-stats from before fleets, only the line.
     private func joinByAddress() {
         let alert = NSAlert()
-        alert.messageText = fleet == true ? "Join a Fleet" : "Join Another Mac"
+        alert.messageText = fleet == true ? L("Join a Fleet") : L("Join Another Mac")
         alert.informativeText = fleet == true
-            ? "The address of a Mac in the fleet, such as http://mac-mini:7777 (its Tailscale or local name, port 7777), or a line its Add Machine… showed."
-            : "On the main Mac, choose Add Machine… in Tokiscope's menu, then paste the line it shows here."
+            ? L("The address of a Mac in the fleet, such as http://mac-mini:7777 (its Tailscale or local name, port 7777), or a line its Add Machine… showed.")
+            : L("On the main Mac, choose Add Machine… in Tokiscope's menu, then paste the line it shows here.")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 400, height: 24))
         field.placeholderString = fleet == true ? "http://mac-mini:7777" : "agent-stats join http://… --code …"
         alert.accessoryView = field
-        alert.addButton(withTitle: "Join")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L("Join"))
+        alert.addButton(withTitle: L("Cancel"))
         NSApp.activate(ignoringOtherApps: true)
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines), fleet = self.fleet == true
         if text.contains("--code") || !fleet {
-            return background("Joining…") {
+            return background(L("Joining…")) {
                 try Stats.joinWithLine(text, fleet: fleet)
-                return fleet && Stats.isReplica ? "This Mac is part of the fleet: it keeps the fleet's stats and counts its agents."
-                    : "This Mac counts its agents and reports them to the hub."
+                return fleet && Stats.isReplica ? L("This Mac is part of the fleet: it keeps the fleet's stats and counts its agents.")
+                    : L("This Mac counts its agents and reports them to the hub.")
             }
         }
         var url = text.contains("://") ? text : "http://" + text
@@ -1909,7 +1951,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     // shows in the menu, with Try Again.
     private func becomeReplica(quietly: Bool) {
         guard Stats.wantsReplica else { replicaError = nil; return }
-        busy = "Making This Mac a Replica…"
+        busy = L("Making This Mac a Replica…")
         DispatchQueue.global().async {
             let r = Result { try Stats.becomeReplica() }
             DispatchQueue.main.async {
@@ -1920,7 +1962,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
                 case .failure(let e):
                     let msg = (e as? Stats.Failure)?.message ?? e.localizedDescription
                     self.replicaError = msg
-                    if !quietly { self.soon { self.say("That Didn't Work", msg, style: .warning) } }
+                    if !quietly { self.soon { self.say(L("That Didn't Work"), msg, style: .warning) } }
                 }
             }
         }
@@ -1933,7 +1975,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         // A Mac on its own becomes the first of a fleet, open to your network, once you say so.
         if !Stats.isReplica {
             guard confirmOpenHub() else { return }
-            return background("Opening This Mac to Your Machines…", { try Stats.becomeReplica(force: true); return "" }) { [weak self] _ in
+            return background(L("Opening This Mac to Your Machines…"), { try Stats.becomeReplica(force: true); return "" }) { [weak self] _ in
                 self?.refreshMembers(); self?.showAddWindow()
             }
         }
@@ -1946,7 +1988,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
             w.onAdded = { [weak self] in self?.refreshMembers(); self?.hub.fetch() }
             w.openHub = { [weak self] then in
                 guard let self, self.confirmOpenHub() else { return }
-                self.background("Opening the Hub to Your Network…", { try Stats.openHub(); return "" }) { _ in then() }
+                self.background(L("Opening the Hub to Your Network…"), { try Stats.openHub(); return "" }) { _ in then() }
             }
             addWindow = w
         }
@@ -1955,24 +1997,21 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     // Only this Mac reaches its hub so far: ask before other machines can (each still needs a code to join).
     private func confirmOpenHub() -> Bool {
         let alert = NSAlert()
-        alert.messageText = "Open the Hub to Your Network?"
-        alert.informativeText = """
-            Until now only this Mac reaches the hub. Other machines will reach it on port \(Stats.hubPort), over \
-            Tailscale or your local network. Each needs a one-time code to join; without one, nobody can report \
-            or read anything. macOS may ask whether agent-stats may accept incoming connections: allow it.
-            """
-        alert.addButton(withTitle: "Open It")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = L("Open the Hub to Your Network?")
+        alert.informativeText = L("Until now only this Mac reaches the hub. Other machines will reach it on port %ld, over Tailscale or your local network. Each needs a one-time code to join; without one, nobody can report or read anything. macOS may ask whether agent-stats may accept incoming connections: allow it.", Stats.hubPort)
+        alert.addButton(withTitle: L("Open It"))
+        alert.addButton(withTitle: L("Cancel"))
         NSApp.activate(ignoringOtherApps: true)
         return alert.runModal() == .alertFirstButtonReturn
     }
     private func addMachineByLine() {
         guard Stats.isHub else {
             let host = hub.route.flatMap { URL(string: $0.url)?.host }
-            return say("Add Machine", "Machines are added on the main Mac, the one that runs the hub\(host.map { " (\($0))" } ?? ""): choose Add Machine… in Tokiscope's menu there.")
+            return say(L("Add Machine"), host.map { L("Machines are added on the main Mac, the one that runs the hub (%@): choose Add Machine… in Tokiscope's menu there.", $0) }
+                ?? L("Machines are added on the main Mac, the one that runs the hub: choose Add Machine… in Tokiscope's menu there."))
         }
         if Stats.hubOnLoopback, !confirmOpenHub() { return }
-        background("Making a Code…", { try Stats.pair() }) { [weak self] line in self?.showCode(line) }
+        background(L("Making a Code…"), { try Stats.pair() }) { [weak self] line in self?.showCode(line) }
     }
 
     // ---- The fleet ------------------------------------------------------------------------------------------------
@@ -1998,14 +2037,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         guard let m = members.first(where: { $0["machine"] as? String == machine }) else { return }
         let name = m["label"] as? String ?? machine
         let alert = NSAlert()
-        alert.messageText = "Remove \(name) From the Fleet?"
-        alert.informativeText = "Its token stops working on every Mac of the fleet, so it can't report or read anything any more. Its stats so far stay. To add it again later, use Add a Machine… in Settings › Machines."
-        alert.addButton(withTitle: "Remove")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = L("Remove %@ From the Fleet?", name)
+        alert.informativeText = L("Its token stops working on every Mac of the fleet, so it can't report or read anything any more. Its stats so far stay. To add it again later, use Add a Machine… in Settings › Machines.")
+        alert.addButton(withTitle: L("Remove"))
+        alert.addButton(withTitle: L("Cancel"))
         alert.buttons[0].hasDestructiveAction = true
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        background("Removing \(name)…") { [weak self] in
+        background(L("Removing %@…", name)) { [weak self] in
             try Stats.exec(["fleet", "remove", machine], timeout: 30)
             DispatchQueue.main.async { self?.refreshMembers() }
             return nil
@@ -2042,18 +2081,15 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
     private func ask(_ r: [String: Any]) {
         guard let id = r["id"] as? String, requests.contains(where: { $0["id"] as? String == id }) else { asking = nil; return }
-        let who = r["label"] as? String ?? r["machine"] as? String ?? "A machine"
+        let who = r["label"] as? String ?? r["machine"] as? String ?? L("A machine")
         asked.insert(id); asking = id
         let alert = NSAlert()
-        alert.messageText = "\(who) Asks to Join Your Fleet"
-        alert.informativeText = """
-            Check that \(who) shows these digits: \(App.spaced(r["digits"] as? String ?? "")).
-
-            Approve only a machine you set up yourself: it will report its agents and read every machine's stats.
-            """
-        alert.addButton(withTitle: "Approve")
-        alert.addButton(withTitle: "Turn Down")
-        alert.addButton(withTitle: "Later")
+        alert.messageText = L("%@ Asks to Join Your Fleet", who)
+        alert.informativeText = L("Check that %@ shows these digits: %@.\n\nApprove only a machine you set up yourself: it will report its agents and read every machine's stats.",
+                                  who, App.spaced(r["digits"] as? String ?? ""))
+        alert.addButton(withTitle: L("Approve"))
+        alert.addButton(withTitle: L("Turn Down"))
+        alert.addButton(withTitle: L("Later"))
         askAlert = alert
         NSApp.activate(ignoringOtherApps: true)
         let res = alert.runModal()
@@ -2062,11 +2098,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         guard res != .cancel else { return next() }       // settled elsewhere meanwhile
         switch res {
         case .alertFirstButtonReturn:
-            background("Approving \(who)…", { try Stats.approve(id); return "" }) { _ in
+            background(L("Approving %@…", who), { try Stats.approve(id); return "" }) { _ in
                 self.requests.removeAll { $0["id"] as? String == id }; self.refreshMembers(); next()
             }
         case .alertSecondButtonReturn:
-            background("Turning Down \(who)…", { try Stats.deny(id); return "" }) { _ in self.requests.removeAll { $0["id"] as? String == id }; next() }
+            background(L("Turning Down %@…", who), { try Stats.deny(id); return "" }) { _ in self.requests.removeAll { $0["id"] as? String == id }; next() }
         default: next()
         }
     }
@@ -2074,21 +2110,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     private func showCode(_ line: String) {
         let install = "curl -fsSL https://raw.githubusercontent.com/kcazin/agent-stats/main/install.sh | sh && ~/.local/bin/"
         let alert = NSAlert()
-        alert.messageText = "Add a Machine"
-        alert.informativeText = """
-            On a Mac: open Tokiscope there, choose Join Another Mac…, and paste:
-
-            \(line)
-
-            On Linux, or a Mac without Tokiscope, run this in a terminal (it installs agent-stats, then joins):
-
-            \(install)\(line)
-
-            The code works once, for 10 minutes.
-            """
-        alert.addButton(withTitle: "Copy for Tokiscope")
-        alert.addButton(withTitle: "Copy for a Terminal")
-        alert.addButton(withTitle: "Done")
+        alert.messageText = L("Add a Machine")
+        alert.informativeText = L("On a Mac: open Tokiscope there, choose Join Another Mac…, and paste:\n\n%@\n\nOn Linux, or a Mac without Tokiscope, run this in a terminal (it installs agent-stats, then joins):\n\n%@\n\nThe code works once, for 10 minutes.",
+                                  line, install + line)
+        alert.addButton(withTitle: L("Copy for Tokiscope"))
+        alert.addButton(withTitle: L("Copy for a Terminal"))
+        alert.addButton(withTitle: L("Done"))
         NSApp.activate(ignoringOtherApps: true)
         let r = alert.runModal()
         guard r != .alertThirdButtonReturn else { return }
@@ -2097,17 +2124,17 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     }
 
     @objc private func startStats() {
-        background("Starting agent-stats…") { try Stats.startAfresh(); return nil }
+        background(L("Starting agent-stats…")) { try Stats.startAfresh(); return nil }
     }
     private func stopStats() {
         let alert = NSAlert()
-        alert.messageText = "Stop agent-stats?"
-        alert.informativeText = "This Mac stops counting its agents and keeping the stats until you start it again in Settings. Nothing counted so far is lost."
-        alert.addButton(withTitle: "Stop")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = L("Stop agent-stats?")
+        alert.informativeText = L("This Mac stops counting its agents and keeping the stats until you start it again in Settings. Nothing counted so far is lost.")
+        alert.addButton(withTitle: L("Stop"))
+        alert.addButton(withTitle: L("Cancel"))
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        background("Stopping agent-stats…") { try Stats.stop(); return nil }
+        background(L("Stopping agent-stats…")) { try Stats.stop(); return nil }
     }
 
     @objc private func openDashboard() { if let u = URL(string: Stats.localHub + "/") { NSWorkspace.shared.open(u) } }
@@ -2115,17 +2142,16 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     @objc private func takeOver() {
         let roles = Stats.separate.filter { $0 != "relay" }
         let alert = NSAlert()
-        alert.messageText = "Let Tokiscope Run agent-stats?"
-        alert.informativeText = """
-            agent-stats was installed on its own here (\(roles.joined(separator: ", "))). Tokiscope can run it instead,             as its background items, and keep it up to date with the app. The config and the stats stay where they are.
-            """
-        alert.addButton(withTitle: "Let Tokiscope Run It")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = L("Let Tokiscope Run agent-stats?")
+        alert.informativeText = L("agent-stats was installed on its own here (%@). Tokiscope can run it instead, as its background items, and keep it up to date with the app. The config and the stats stay where they are.",
+                                  roles.joined(separator: ", "))
+        alert.addButton(withTitle: L("Let Tokiscope Run It"))
+        alert.addButton(withTitle: L("Cancel"))
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        background("Taking Over agent-stats…") {
+        background(L("Taking Over agent-stats…")) {
             try Stats.takeOver()
-            return "Tokiscope runs agent-stats here now. ~/.local/bin/agent-stats stays for the terminal; Tokiscope's own copy is the one that runs."
+            return L("Tokiscope runs agent-stats here now. ~/.local/bin/agent-stats stays for the terminal; Tokiscope's own copy is the one that runs.")
         }
     }
 
