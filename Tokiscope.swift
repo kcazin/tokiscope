@@ -1496,10 +1496,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
             config.userContentController.add(self, name: "pick")
             config.setURLSchemeHandler(pages, forURLScheme: BundlePages.scheme)
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 760),
-                             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
-            w.title = "Tokiscope Settings"
-            w.titleVisibility = .hidden                  // the page says it
-            w.titlebarAppearsTransparent = true
+                             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            w.title = "Tokiscope Settings"           // a title bar of its own, to move it by
             w.appearance = NSAppearance(named: .darkAqua)
             w.backgroundColor = NSColor(white: 0.08, alpha: 1)
             w.minSize = NSSize(width: 560, height: 420)
@@ -1525,6 +1523,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
             refreshMembers()
             if tab == "machines" { discover() }
         }
+        // While it's open the app is in the Dock and ⌘-Tab, so it can be found again behind other windows.
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
@@ -1533,6 +1533,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         guard (note.object as? NSWindow) === settingsWindow else { return }
         settingsWeb?.load(URLRequest(url: URL(string: "about:blank")!))
         settingsTimer?.invalidate(); settingsTimer = nil
+        NSApp.setActivationPolicy(.accessory)        // out of the Dock again
     }
     private func syncSettings() {
         guard settingsWindow?.isVisible == true, let data = try? JSONSerialization.data(withJSONObject: settingsState()) else { return }
