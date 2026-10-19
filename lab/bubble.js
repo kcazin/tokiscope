@@ -310,7 +310,9 @@ export function bubble(root, { style = 'orb', open: what = 'haul', app = false, 
   const msg = (name, body) => window.webkit?.messageHandlers?.[name]?.postMessage(body);
   // The window holds the bubble, or the opened field, whichever is bigger.
   let lastFrame = '', aw = 56, ah = 56, top = false, left = false;
+  let gone = false;                                  // stopped: it says nothing more to the app
   const frame = () => {
+    if (gone) return;
     const a = artEl.getBoundingClientRect();
     aw = a.width; ah = a.height;
     shell.style.setProperty('--aw', aw + 'px'); shell.style.setProperty('--ah', ah + 'px');
@@ -321,12 +323,14 @@ export function bubble(root, { style = 'orb', open: what = 'haul', app = false, 
   // to close it; otherwise the ball. Measured from the corner the bubble is pinned to (x and y are the gaps to its two
   // edges), which stays put as the window resizes.
   const rects = () => {
+    if (gone) return;
     const s = shell.getBoundingClientRect();
     const box = (x, y, w, h) => ({ x: (left ? x : innerWidth - x - w) - 4, y: (top ? y : innerHeight - y - h) - 4, w: w + 8, h: h + 8 });
     const [w, h] = open ? [aw, ah] : [56, 56];
     msg('rects', { rects: [box(left ? s.left : s.right - w, top ? s.top : s.bottom - h, w, h)], top, left });
   };
-  new ResizeObserver(() => { frame(); rects(); }).observe(artEl);
+  const sized = new ResizeObserver(() => { frame(); rects(); });
+  sized.observe(artEl);
   addEventListener('resize', rects);
   const update = () => { shell.classList.toggle('open', open); shell.classList.toggle('hover', hovering); rects(); };
   const api = {
@@ -356,8 +360,12 @@ export function bubble(root, { style = 'orb', open: what = 'haul', app = false, 
   frame();
   // For the app's menu: today at a glance, every second.
   const ticking = app ? setInterval(() => msg('today', today()), 1000) : 0;
-  // Stops it, for a preview that was replaced.
-  api.stop = () => { stop(); clearInterval(ticking); feed.channels.splice(feed.channels.indexOf(ch), 1); wrap.remove(); };
+  // Stops it, for a bubble (or a preview) that was replaced: taken out of the page, it would otherwise tell the app
+  // it's 0 px wide.
+  api.stop = () => {
+    gone = true; sized.disconnect(); removeEventListener('resize', rects);
+    stop(); clearInterval(ticking); feed.channels.splice(feed.channels.indexOf(ch), 1); wrap.remove();
+  };
   return api;
 }
 
