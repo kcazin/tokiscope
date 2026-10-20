@@ -675,6 +675,10 @@ export function haul(el, opt) {
   // Agents in the top right corner, over the pile: one cursor each, in its project's colour; subagents shorter.
   const agentAt = i => ({ x: W - 6 - (Math.min(12, feed.agents.length) - 1 - i) * 4, y: 5 });
   ch.arrive = p => {
+    // Past a sixth of the field's room, more and more squares go straight to their project (counted, not drawn), all
+    // of them at a third: when the tokens come faster than any truck could clear, the field stays a field.
+    const room = cols * maxH;
+    if (Math.random() < (pileN() + air.length - room / 6) / (room / 6)) { ch.delivered(p); flash[p] = performance.now() / 1000 + 0.5; return; }
     const c = { p, k: SHADES[Math.random() * 3 | 0] }, ag = feed.agents.slice(0, 12), i = ag.findIndex(a => a.project === p);
     const tc = Math.floor(cols * (0.35 + Math.random() * 0.6)), tx = colX(tc), ty = topOf(tc) - S, T = 0.8 + Math.random() * 0.3;
     if (i < 0) { air.push({ x: tx, y: -4, vx: 0, vy: 30, c }); return; }   // not on screen: falls from above
@@ -690,39 +694,45 @@ export function haul(el, opt) {
       }
     }
   }
-  // The truck works the pile's left foot, reaching about 16 px ahead of its cab.
-  const reach = () => { const r = []; for (let i = 0; i < cols; i++) if (colX(i) >= tr.x + 44 && colX(i) <= tr.x + 62 && hgt[i]) r.push(i); return r; };
+  // The truck works the pile's left foot, reaching about 16 px ahead of its cab (further in a hurry).
+  const reach = () => { const r = []; for (let i = 0; i < cols; i++) if (colX(i) >= tr.x + 44 && colX(i) <= tr.x + 62 + 9 * (hurry - 1) && hgt[i]) r.push(i); return r; };
   const parkX = () => { for (let i = 0; i < cols; i++) if (hgt[i]) return Math.max(hole + 8, colX(i) - 46); return null; };
-  const load = () => Math.max(9, Math.min(30, Math.round(pileN() / 3)));
+  // The more there is to clear, the harder it works: up to three times as fast, with fuller buckets and loads, so a
+  // busy day's pile goes down instead of filling the field; flat out at a sixth of the field's room in squares.
+  let hurry = 1;
+  const load = () => Math.max(9, Math.min(Math.round(18 + 9 * hurry), 45, Math.round(pileN() / 3)));
   function drive(to, dt, speed) { const d = Math.sign(to - tr.x) * Math.min(Math.abs(to - tr.x), speed * dt); tr.x += d; tr.odo += d; return tr.x === to; }
   function stepTruck(dt) {
+    hurry += (1 + 2 * Math.min(1, (pileN() + air.length) / (cols * maxH / 6)) - hurry) * Math.min(1, dt * 1.5);
+    const h = hurry;
     switch (tr.phase) {
       case 'wait': if (pileN() >= 3) tr.phase = 'toPile'; break;
-      case 'toPile': { const to = parkX(); if (to == null) { tr.phase = 'wait'; break; } if (drive(to, dt, 45)) { tr.phase = 'load'; tr.f = 0; } break; }
+      case 'toPile': { const to = parkX(); if (to == null) { tr.phase = 'wait'; break; } if (drive(to, dt, 45 * h)) { tr.phase = 'load'; tr.f = 0; } break; }
       case 'load': {
-        tr.f += dt / 0.7;
+        tr.f += dt * h / 0.7;
         tr.arm = REST + (SCOOP - REST) * Math.sin(Math.PI * Math.min(1, tr.f));
         if (!tr.took && tr.f >= 0.5) {
           tr.took = true;
-          for (let k = 0; k < 3; k++) { const r = reach(); if (!r.length) break; tr.bucket.push(pop(r.reduce((m, i) => hgt[i] > hgt[m] ? i : m, r[0]))); }
+          for (let k = 0; k < Math.round(2 + h); k++) { const r = reach(); if (!r.length) break; tr.bucket.push(pop(r.reduce((m, i) => hgt[i] > hgt[m] ? i : m, r[0]))); }
         }
         if (tr.f >= 1) {
           tr.bed.push(...tr.bucket); tr.bucket = []; tr.f = 0; tr.took = false; tr.arm = REST;
-          if (tr.bed.length >= load() || !reach().length) tr.phase = tr.bed.length ? 'toHole' : 'toPile';
+          // Out of reach with room in the bed, it moves up the pile and fills up before the trip to the hole.
+          if (tr.bed.length >= load() || !reach().length) tr.phase = tr.bed.length >= load() || parkX() == null ? (tr.bed.length ? 'toHole' : 'wait') : 'toPile';
         }
         break;
       }
-      case 'toHole': if (drive(hole - 4, dt, 50)) tr.phase = 'tip'; break;
+      case 'toHole': if (drive(hole - 4, dt, 50 * h)) tr.phase = 'tip'; break;
       case 'tip':
-        tr.tip = Math.min(1, tr.tip + dt * 2);
-        if (tr.tip > 0.6 && (tr.pour += dt) > 0.035) {
+        tr.tip = Math.min(1, tr.tip + dt * 2 * h);
+        if (tr.tip > 0.6 && (tr.pour += dt * h) > 0.035) {
           tr.pour = 0;
           const c = tr.bed.pop();
           if (c) down.push({ x: hole - 2, y: ground - 10, vx: -8, vy: 0, c, stage: 'hole' });
           else tr.phase = 'untip';
         }
         break;
-      case 'untip': tr.tip = Math.max(0, tr.tip - dt * 2.5); if (!tr.tip) tr.phase = pileN() ? 'toPile' : 'wait'; break;
+      case 'untip': tr.tip = Math.max(0, tr.tip - dt * 2.5 * h); if (!tr.tip) tr.phase = pileN() ? 'toPile' : 'wait'; break;
     }
   }
   // Out of the hole: down the chute, then along to the project.
