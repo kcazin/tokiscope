@@ -135,7 +135,7 @@ const STYLES = {
   odo: { name: say('Odometer'), note: say('Today’s tokens on wheels, in thousands, rolling as fast as they come; the rate under them.'), make(ctx) {
     return { arrive() {}, draw() {
       font(7, ctx, 'center'); ctx.fillStyle = DIM; ctx.fillText(fit(ctx, say(flow.when === 'today' ? '{n} today' : '{n} since', { n: short(flow.shown) }), 40), D / 2, 13);
-      wheels(ctx, flow.shown, { x: 9, y: 19, n: 4, dw: 9, dh: 16, size: 10, lo: 3, rate: flow.rate, col: rgba(lead()), sep: 0 });
+      wheels(ctx, flow.shown, { x: 9, y: 19, n: 4, dw: 9, dh: 16, size: 10, lo: 3, rate: flow.spin, col: rgba(lead()), sep: 0 });
       font(7, ctx); ctx.fillStyle = DIM; ctx.fillText('K', 46.5, 28);
       font(8, ctx, 'center'); ctx.fillStyle = INK; ctx.fillText(say('{n}/s', { n: fmt(flow.rate) }), D / 2, 44);
     } };

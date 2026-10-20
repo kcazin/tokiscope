@@ -14,7 +14,8 @@ const P = [], A = [], turnListeners = [];
 const per = (s, T) => T >= s.a && T < s.b ? 1000 / (s.b - s.a) : 0;
 const rest = (s, T) => Math.max(0, Math.min(1, (s.b - T) / (s.b - s.a)));
 const over = (since, live) => live ? Math.max(2500, Math.min(8000, since)) : 15000;
-// `rate` tokens a second now and `out` output tokens a second (both smoothed), `of` the rate per project, `total`
+// `rate` tokens a second now and `out` output tokens a second (both smoothed), `spin` how fast `shown` moves (barely
+// smoothed, still as soon as it is: what the wheels blur by), `of` the rate per project, `total`
 // tokens today as published and `shown` less what is still being handed out, `history` the rate every half second
 // for a minute, `turns` the last minute's turns ({ at, p, n }). `agents`: id → { project, model, state, io, rate, out,
 // on (working now), first (seen), last (its last turn) and lastN (that turn's tokens) }.
@@ -22,13 +23,13 @@ const over = (since, live) => live ? Math.max(2500, Math.min(8000, since)) : 150
 // some and an agent-stats that splits each project's tokens by kind (0.7 on), the totals and rates are the projects';
 // otherwise they're the agents' turns, kind by kind, and `total` counts them from `since` (output alone from the
 // relay's count for today). `what` names them ('' for all), `label` says what `total` is.
-export const flow = { rate: 0, out: 0, of: {}, total: 0, shown: 0, history: [], turns: [], agents: new Map(), kinds: KINDS, what: '', label: say('{what} TODAY', { what: say('TOKENS') }), when: 'today', since: 0 };
+export const flow = { rate: 0, spin: 0, out: 0, of: {}, total: 0, shown: 0, history: [], turns: [], agents: new Map(), kinds: KINDS, what: '', label: say('{what} TODAY', { what: say('TOKENS') }), when: 'today', since: 0 };
 export function setKinds(list) {
   const k = KINDS.filter(x => list.includes(x));
   flow.kinds = k.length ? k : KINDS;
   setCounting(flow.kinds);
   flow.what = flow.kinds.length === 4 ? '' : flow.kinds.map(x => KIND[x]).join(' + ');
-  base = null; flow.history = []; flow.turns = []; flow.rate = flow.out = 0; flow.of = {};       // counted afresh
+  base = null; flow.history = []; flow.turns = []; flow.rate = flow.spin = flow.out = 0; flow.of = {};       // counted afresh
 }
 const all = () => flow.kinds.length === 4;
 // f({ id, p, model, n, io, at }) for each turn as it lands; `at` in performance.now ms. With `node`, only while that
@@ -89,7 +90,10 @@ function step(dt, T) {
     const g = flow.agents.get(s.id), v = per(s, T); o += s.o * v;
     if (g) { g.rate += (s.n + s.o) * v; g.out += s.o * v; }
   }
-  flow.rate += (r - flow.rate) * k; flow.out += (o - flow.out) * k;
+  // Smoothed while tokens come; once none do, down to nothing in a second or two rather than ten.
+  const kr = r ? k : 1 - Math.exp(-dt / 0.35);
+  flow.rate = r || flow.rate > 1 ? flow.rate + (r - flow.rate) * kr : 0; flow.out = o || flow.out > 1 ? flow.out + (o - flow.out) * kr : 0;
+  flow.spin = r ? flow.spin + (r - flow.spin) * (1 - Math.exp(-dt / 0.15)) : 0;
   for (const p of new Set([...Object.keys(of), ...Object.keys(flow.of)])) flow.of[p] = (flow.of[p] || 0) + ((of[p] || 0) - (flow.of[p] || 0)) * k;
   flow.shown = flow.total - left;
   while (flow.turns.length && flow.turns[0].at < T - 60000) flow.turns.shift();
@@ -323,7 +327,7 @@ function odometer(el) {
       font(9, ctx); ctx.fillStyle = DIM; ctx.fillText(fit(ctx, flow.label, W - 70), 4, 7);
       status(ctx, W - 4, 7, t);
       const v = Math.max(0, flow.shown), n = Math.max(10, String(Math.floor(v)).length);
-      wheels(ctx, v, { x: Math.round((W - n * DW - Math.floor((n - 1) / 3) * 7) / 2), y: WY, n, dw: DW, dh: DH, size: 24, rate: flow.rate, col: rgba(lead()) });
+      wheels(ctx, v, { x: Math.round((W - n * DW - Math.floor((n - 1) / 3) * 7) / 2), y: WY, n, dw: DW, dh: DH, size: 24, rate: flow.spin, col: rgba(lead()) });
       // The gauge: decades from 1 to 1M tokens a second; the needle sways on a spring and hums with the rate.
       const cx = 66, cy = 146, R = 54, ang = f => Math.PI * (1 + f);
       ctx.lineCap = 'round';
@@ -485,7 +489,7 @@ function haulFlow(el) {
       ctx.clearRect(0, 0, W, H);
       // As many wheels as the figure needs (ten at least), then the rate after them, the last minute at the right.
       const n = Math.max(10, String(Math.floor(Math.max(0, flow.shown))).length), X = 4 + n * 12 + Math.floor((n - 1) / 3) * 5 + 8;
-      wheels(ctx, flow.shown, { x: 4, y: 6, n, dw: 12, dh: 22, size: 13, rate: flow.rate, col: rgba(lead()), sep: 5 });
+      wheels(ctx, flow.shown, { x: 4, y: 6, n, dw: 12, dh: 22, size: 13, rate: flow.spin, col: rgba(lead()), sep: 5 });
       font(16, ctx); ctx.fillStyle = INK; ctx.fillText(fmt(flow.rate), X, 13);
       const rw = ctx.measureText(fmt(flow.rate)).width;
       font(8, ctx); ctx.fillStyle = DIM; ctx.fillText(say('tok/s'), X + rw + 4, 15);
