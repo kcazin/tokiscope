@@ -1301,6 +1301,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         root.addSubview(handle)
         panel.contentView = root
         panel.onMenu = { [weak self] in self?.showContextMenu($0) }
+        // A display unplugged, moved or asleep can leave the bubble where no screen is: bring it back onto one.
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, !self.dragging, self.anchored else { return }
+            self.reanchor()
+        }
 
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "box.truck", accessibilityDescription: "Tokiscope")
@@ -1709,7 +1714,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         NSMenu.popUpContextMenu(contextMenu, with: event, for: root)
     }
 
-    @objc private func toggleShown() { panel.isVisible ? panel.orderOut(nil) : panel.orderFrontRegardless() }
+    // Shown again, the bubble comes back onto a screen: the displays may have changed while it was hidden.
+    @objc private func toggleShown() {
+        if panel.isVisible { panel.orderOut(nil); return }
+        reanchor()
+        panel.orderFrontRegardless()
+    }
     @objc private func reload() { load() }
     // The bubble, what it opens into, the tokens counted, the backdrop and the language change in the page as it is
     // (lab/bubble.html window.bubble.set), keeping the stats it has; the next load reads them from the URL.
