@@ -81,7 +81,8 @@ function fromHub(state, repos) {
   for (const s of sessions) active[project(s)] = Math.max(active[project(s)] || 0, s.working ? state.now : s.lastActivity || 0);
   const agents = sessions.filter(s => busy(s) || sessions.some(c => busy(c) && c.parent === s.id && c.machine === s.machine)).map(s => ({
     id: `${s.machine}|${s.id}`, parent: s.parent ? `${s.machine}|${s.parent}` : null, agent: s.agent, kind: s.kind, model: s.model,
-    project: project(s), state: s.state, io: s.io,
+    // One listed for a busy subagent is delegating, as in the hub's public payload (its own turn may say `idle`).
+    project: project(s), state: busy(s) ? s.state : 'delegate', io: s.io,
   }));
   const keys = [...new Set([...Object.keys(today).filter(k => today[k] > 0), ...agents.map(a => a.project)])];
   return {
