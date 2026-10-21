@@ -1304,7 +1304,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
         // A display unplugged, moved or asleep can leave the bubble where no screen is: bring it back onto one.
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self, !self.dragging, self.anchored else { return }
-            self.reanchor()
+            self.keepOnScreen()
         }
 
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -1438,8 +1438,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
     // is now, tell the page, then grow again from that corner.
     private func reanchor() {
         var box = bubbleBox()
-        let screen = (NSScreen.screens.max { $0.frame.intersection(box).area < $1.frame.intersection(box).area }
-            .flatMap { $0.frame.intersects(box) ? $0 : nil } ?? NSScreen.main)?.visibleFrame ?? box
+        let screen = screenFrame(for: box)
         box = kept(box, in: screen)
         panel.setFrame(box, display: true)
         anchorTop = box.midY > screen.midY; anchorLeft = box.midX < screen.midX; anchored = true
@@ -1449,6 +1448,20 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelega
                 self.place(self.bubbleBox(), size: self.fullSize)
             }
         }
+    }
+    // The visible part of the screen most of `box` is on, else the main one.
+    private func screenFrame(for box: NSRect) -> NSRect {
+        (NSScreen.screens.max { $0.frame.intersection(box).area < $1.frame.intersection(box).area }
+            .flatMap { $0.frame.intersects(box) ? $0 : nil } ?? NSScreen.main)?.visibleFrame ?? box
+    }
+    // After a change of displays (and the Dock moving, the menu bar, a space: macOS says so often, several times in a
+    // row): nothing, while the bubble is still wholly on its screen; moved straight there when its corner stays the
+    // same; re-pinned only when it changes. Shrinking and growing again each time made the window flicker.
+    private func keepOnScreen() {
+        let box = bubbleBox(), screen = screenFrame(for: box), moved = kept(box, in: screen)
+        guard moved != box else { return }
+        if (moved.midY > screen.midY) == anchorTop && (moved.midX < screen.midX) == anchorLeft { place(moved, size: fullSize) }
+        else { reanchor() }
     }
     // Dragging moves the window with the pointer, keeping the bubble (or the open field) on screen, right up to the edges and corners. A closed bubble is
     // dragged as just the bubble and re-pinned where it is dropped; the open field moves as it is.
