@@ -1110,6 +1110,7 @@ export function backdrop(W, B, { at = Math.round(W * 0.36), city, clock: time = 
     const Y = a => B - 1 - (a > 0 ? Math.pow(a / (Math.PI / 2), 0.75) * (B - 12) : a / RAD * 1.5);
     const sx = X(sun.az), sy = Y(sun.alt), mx = X(moon.az), my = Y(moon.alt), phase = phaseOf(so, mo);
     const moonUp = moon.alt > -0.02, moonlight = moonUp ? smooth(0, 0.15, moon.alt) * Math.sin(Math.PI * phase) * night : 0;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);   // WebKit can hand the canvas back with its scale gone (lab.js, sharp)
     ctx.clearRect(0, 0, W, B);
     for (let y = 0; y < B; y += 2) { ctx.fillStyle = css(mix(sky.top, sky.hor, Math.pow(y / B, 1.4))); ctx.fillRect(0, y, W, 2); }
     // The glow where the sun is about to rise or has just set, and round it by day.

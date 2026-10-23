@@ -4,7 +4,7 @@
 // since the last ones came in (2.5–8 s; 15 s when polled), so everything below runs at the rate the tokens were made
 // instead of jumping once a second. The pieces here are shown by flow.html; the bubbles, cards and fields built from
 // them by bubble.js, and two fields join the lab's MACHINES (a dashboard, and the trucks at speed).
-import { run, feed, onUpdate, haul, HAUL, haulH, MACHINES, PROJECTS, SHORT, RGB, shade, MONO, KINDS, KIND, countedToday, setCounting } from './lab.js';
+import { run, feed, onUpdate, sharp, haul, HAUL, haulH, MACHINES, PROJECTS, SHORT, RGB, shade, MONO, KINDS, KIND, countedToday, setCounting } from './lab.js';
 import { t as say } from './i18n.js';
 
 // ---- The flow ----------------------------------------------------------------------------------------------------
@@ -108,11 +108,8 @@ export const shownAgents = max => [...flow.agents.values()].filter(g => g.on || 
 
 // ---- Drawing helpers ---------------------------------------------------------------------------------------------
 export function hd(el, W, H) {
-  const c = document.createElement('canvas'), dpr = Math.min(4, devicePixelRatio || 1);
-  c.width = W * dpr; c.height = H * dpr;
-  Object.assign(c.style, { width: W + 'px', height: H + 'px', display: 'block' });
-  el.replaceChildren(c);
-  const ctx = c.getContext('2d'); ctx.scale(dpr, dpr);
+  const ctx = sharp(W, H);
+  el.replaceChildren(ctx.canvas);
   return ctx;
 }
 export const INK = '#e8e8e8', DIM = 'rgba(232, 232, 232, .45)', FAINT = 'rgba(232, 232, 232, .1)';

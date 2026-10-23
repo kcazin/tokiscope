@@ -638,12 +638,28 @@ const TRUCK_PX = [
 const INK = { D: '#8f8f8f', d: '#666666', Y: '#e8e8e8', y: '#141414', B: '#e4e4e4', W: '#101215', S: '#4c4c4c', K: '#1a1a1a', H: '#c4c4c4', L: '#ffffff', R: '#e2502b', r: '#4a1a0e', A: '#cfcfcf' };
 const BEDK = new Set(['D', 'd', 'Y', 'y']), REST = -2.5, SCOOP = 0.75;
 function stageHD(el, W, H) {
-  const c = document.createElement("canvas"), dpr = Math.min(4, devicePixelRatio || 1);
+  const ctx = sharp(W, H);
+  el.appendChild(ctx.canvas);
+  return ctx;
+}
+// A canvas W × H CSS px at the screen's resolution, drawn in CSS px. WebKit can hand a canvas back blank with its
+// scale gone and not say so (after sleep, or its GPU process restarting), which drew everything at half size in the
+// corner: every frame puts the scale back.
+const scaled = new Set();
+export function sharp(W, H) {
+  const c = document.createElement('canvas'), dpr = Math.min(4, devicePixelRatio || 1);
   c.width = W * dpr; c.height = H * dpr;
   Object.assign(c.style, { width: W + 'px', height: H + 'px', display: 'block' });
-  el.appendChild(c);
   const ctx = c.getContext('2d'); ctx.scale(dpr, dpr);
+  scaled.add({ ref: new WeakRef(ctx), dpr });
   return ctx;
+}
+function rescale() {
+  for (const s of scaled) {
+    const ctx = s.ref.deref();
+    if (!ctx) scaled.delete(s);
+    else if (ctx.getTransform().a !== s.dpr) ctx.setTransform(s.dpr, 0, 0, s.dpr, 0, 0);
+  }
 }
 // layout 'rows': a line per project under the field, its bar growing as its squares arrive (the site in small).
 // layout 'cells': the projects as a legend of `across` cells per row; squares run along a rail to theirs.
@@ -907,6 +923,7 @@ export function run(slots, extra = [], onChange = () => {}) {
   const frame = now => {
     if (stopped) return;
     const dt = Math.min(0.05, (now - (last || now)) / 1000), t = now / 1000; last = now;
+    rescale();
     for (const c of feed.channels) while (c.queue.length && c.queue[0].at <= now) c.arrive(c.queue.shift().p);
     for (const m of [...built, ...extra]) { m.step(dt, t); m.draw(t); }
     requestAnimationFrame(frame);

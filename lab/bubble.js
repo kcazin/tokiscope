@@ -3,17 +3,16 @@
 // so nothing moves or resizes as it shows. In the app (?app=1) the window is told that full size once, and where the
 // visible parts are, so it can let clicks through everywhere else; it passes hover in, and hears today at a glance
 // every second for its menu.
-import { run, feed, channel, MACHINES, PROJECTS, NAMES, SHORT, RGB, SHADES, shade, short, MONO, countedWhat } from './lab.js';
+import { run, feed, channel, sharp, MACHINES, PROJECTS, NAMES, SHORT, RGB, SHADES, shade, short, MONO, countedWhat } from './lab.js';
 import { flow, onTurn, shownAgents, shownWhat, shownTotal, hd, font, fit, status, STATUS_W, spark, wheels, traces, typist, tachometer, levels, fmt, lg, kickOf, lead, rgba, INK, DIM, FAINT, demo } from './flow.js';
 import { t as say, tn as sayN, JA_FONTS } from './i18n.js';
 
 const D = 56;                                                     // the bubble's diameter, CSS px
 const rgb = (p, a = 1) => `rgba(${RGB[p]}, ${a})`;
 function disc(el) {
-  const c = document.createElement('canvas'), dpr = Math.min(4, devicePixelRatio || 1);
-  c.width = c.height = D * dpr; c.style.width = c.style.height = D + 'px';
-  el.append(c);
-  const ctx = c.getContext('2d'); ctx.scale(dpr, dpr);
+  const ctx = sharp(D, D);
+  ctx.canvas.style.display = '';
+  el.append(ctx.canvas);
   return ctx;
 }
 const STATES = { writing: 'writing', edit: 'writing', thinking: 'thinking', run: 'running', read: 'reading', tool: 'using tools', delegate: 'delegating', waiting: 'waiting on me' };
